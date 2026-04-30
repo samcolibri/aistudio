@@ -23,9 +23,13 @@ import 'dotenv/config'
 import http from 'http'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'fs'
 import { readFile as readFileAsync, writeFile } from 'fs/promises'
-import { join, extname, basename } from 'path'
+import { join, extname, basename, relative } from 'path'
 import { fetchCreativeApprovedBriefs, fetchBriefByRank } from '../client/airtable.js'
+import { generateImage } from '../client/google-ai.js'
+import { recordChoice, saveSession, getStats, getBestModels } from '../client/ab-preferences.js'
 import type { ContentBrief } from '../types/brief.js'
+
+const ASSETS_DIR = process.env.ASSETS_DIR ?? '/Users/anmolsam/Downloads/aistudio-assets'
 
 const PORT = parseInt(process.env.DASHBOARD_PORT ?? '3004')
 const ROOT = process.cwd()
@@ -165,7 +169,109 @@ async function checkElevenLabs() {
 async function checkKling() {
   const key = process.env.KLING_API_KEY
   if (!key) return { ok: false, error: 'Set KLING_API_KEY in Settings' }
-  return { ok: false, error: 'Kling API check not implemented' }
+  const res = await fetch('https://api.klingai.com/v1/account/costs', {
+    headers: { Authorization: `Bearer ${key}` }
+  }).catch(() => null)
+  return { ok: !!res?.ok, error: res?.ok ? undefined : 'Check KLING_API_KEY' }
+}
+
+async function checkFlux() {
+  const key = process.env.FLUX_API_KEY ?? process.env.BFL_API_KEY
+  if (!key) return { ok: false, error: 'Set FLUX_API_KEY in Settings' }
+  const res = await fetch('https://api.bfl.ai/v1/models', {
+    headers: { 'x-key': key }
+  }).catch(() => null)
+  return { ok: !!res?.ok, error: res?.ok ? undefined : 'Check FLUX_API_KEY' }
+}
+
+async function checkOpenAI() {
+  const key = process.env.OPENAI_API_KEY
+  if (!key) return { ok: false, error: 'Set OPENAI_API_KEY in Settings' }
+  const res = await fetch('https://api.openai.com/v1/models', {
+    headers: { Authorization: `Bearer ${key}` }
+  }).catch(() => null)
+  return { ok: !!res?.ok, error: res?.ok ? undefined : 'Check OPENAI_API_KEY' }
+}
+
+// ── Browse local assets folder ─────────────────────────────────────────────────
+function browseAssets(dir: string = ASSETS_DIR) {
+  const VIDEO_EXT = new Set(['.mp4','.mov','.avi','.mkv','.webm'])
+  const IMAGE_EXT = new Set(['.png','.jpg','.jpeg','.svg','.gif','.webp'])
+
+  function walk(d: string): any[] {
+    const items: any[] = []
+    try {
+      for (const entry of readdirSync(d, { withFileTypes: true })) {
+        if (entry.name.startsWith('.')) continue
+        const full = join(d, entry.name)
+        if (entry.isDirectory()) {
+          items.push({ name: entry.name, type: 'folder', path: full, children: walk(full) })
+        } else {
+          const ext = extname(entry.name).toLowerCase()
+          const mediaType = VIDEO_EXT.has(ext) ? 'video' : IMAGE_EXT.has(ext) ? 'image' : null
+          if (!mediaType) continue
+          const st = statSync(full)
+          items.push({ name: entry.name, type: mediaType, path: full, size: st.size, ext })
+        }
+      }
+    } catch {}
+    return items
+  }
+  return { root: ASSETS_DIR, tree: walk(dir) }
+}
+
+// ── A/B image generation ──────────────────────────────────────────────────────
+async function handleGenerateAB(body: { brief: ContentBrief; prompt?: string }) {
+  const { brief } = body
+  const sessionId = `ab_${Date.now()}`
+
+  const prompt = body.prompt ?? [
+    `Pinterest educational pin for nursing students.`,
+    `Title: "${brief.title}"`,
+    `Key message: "${brief.hook}"`,
+    `Vertical 2:3 format. Bold headline, infographic-style layout, text-forward.`,
+    `SimpleNursing brand: teal #00709c, light blue #75c7e6, pink accent #fc3467.`,
+    `Professional nursing education. High contrast, mobile-optimized, save-worthy.`,
+    `NO watermarks, NO logos, NO URLs.`,
+  ].join(' ')
+
+  const models = getBestModels(3)
+
+  // Run all models in parallel — each returns base64 or error
+  const results = await Promise.all(models.map(async (model) => {
+    const start = Date.now()
+    try {
+      let buf: Buffer
+      if (model === 'imagen4') {
+        buf = await generateImage({ prompt, aspectRatio: '2:3' })
+      } else if (model === 'flux-pro') {
+        const { generateFlux } = await import('../client/flux.js')
+        buf = await generateFlux({ prompt, aspectRatio: '2:3' })
+      } else {
+        const { generateDalle } = await import('../client/openai-image.js')
+        buf = await generateDalle({ prompt, size: '1024x1792' })
+      }
+      return { model, imageB64: buf.toString('base64'), durationMs: Date.now() - start }
+    } catch (err) {
+      return { model, imageB64: '', durationMs: Date.now() - start, error: String(err) }
+    }
+  }))
+
+  saveSession({
+    sessionId,
+    briefId: brief.airtableId,
+    channel: brief.channel,
+    prompt,
+    results,
+    createdAt: new Date().toISOString(),
+  })
+
+  return { sessionId, results: results.map(r => ({ ...r, imageB64: r.imageB64.slice(0, 50) !== '' ? r.imageB64 : '' })) }
+}
+
+function handleAbChoice(body: { sessionId: string; winner: string }) {
+  recordChoice(body.sessionId, body.winner as any)
+  return { ok: true, stats: getStats() }
 }
 
 async function checkManim() {
@@ -328,14 +434,31 @@ const server = http.createServer(async (req, res) => {
       return json(res, { assets, total: assets.length, indexedAt: m.indexedAt })
     }
     if (path === '/api/api-health' && req.method === 'GET') {
-      const [google, fishAudio, airtable, runway, elevenlabs, kling, manim] = await Promise.allSettled([
+      const checks = await Promise.allSettled([
         checkGoogle(), checkFishAudio(), checkAirtable(), checkRunway(),
-        checkElevenLabs(), checkKling(), checkManim(),
+        checkElevenLabs(), checkKling(), checkManim(), checkFlux(), checkOpenAI(),
       ])
       const pick = (r: PromiseSettledResult<any>) =>
         r.status === 'fulfilled' ? r.value : { ok: false, error: String((r as any).reason) }
-      return json(res, { google: pick(google), fishAudio: pick(fishAudio), airtable: pick(airtable),
-        runway: pick(runway), elevenlabs: pick(elevenlabs), kling: pick(kling), manim: pick(manim) })
+      return json(res, {
+        google: pick(checks[0]), fishAudio: pick(checks[1]), airtable: pick(checks[2]),
+        runway: pick(checks[3]), elevenlabs: pick(checks[4]), kling: pick(checks[5]),
+        manim: pick(checks[6]), flux: pick(checks[7]), openai: pick(checks[8]),
+      })
+    }
+    if (path === '/api/browse-assets' && req.method === 'GET') {
+      return json(res, browseAssets())
+    }
+    if (path === '/api/generate-ab' && req.method === 'POST') {
+      const body = await readBody(req)
+      return json(res, await handleGenerateAB(body))
+    }
+    if (path === '/api/ab-choice' && req.method === 'POST') {
+      const body = await readBody(req)
+      return json(res, handleAbChoice(body))
+    }
+    if (path === '/api/ab-stats' && req.method === 'GET') {
+      return json(res, { stats: getStats(), bestModels: getBestModels(2) })
     }
     if (path === '/api/env' && req.method === 'GET') {
       return json(res, maskEnv(readEnv()))
@@ -607,14 +730,20 @@ function ManimPanel({brief}){
 
 // ── Settings Panel ─────────────────────────────────────────────────────────────
 const API_KEYS=[
-  {key:'GOOGLE_AI_KEY',label:'Google AI (Veo3 + Imagen4)',hint:'aistudio.google.com → API keys'},
-  {key:'FISH_AUDIO_API_KEY',label:'Fish Audio (Nurse Mike voice)',hint:'fish.audio/go-api'},
-  {key:'RUNWAY_API_KEY',label:'Runway Gen-3 Alpha (video)',hint:'app.runwayml.com'},
-  {key:'ELEVENLABS_API_KEY',label:'ElevenLabs (alt voice)',hint:'elevenlabs.io'},
-  {key:'KLING_API_KEY',label:'Kling AI (video)',hint:'klingai.com'},
-  {key:'LUMA_API_KEY',label:'Luma Dream Machine (video)',hint:'lumalabs.ai'},
-  {key:'ANTHROPIC_API_KEY',label:'Claude (script analysis)',hint:'console.anthropic.com'},
-  {key:'AIRTABLE_API_KEY',label:'Airtable (Chad briefs)',hint:'airtable.com/create/tokens'},
+  // Image generation (A/B tested for Pinterest)
+  {key:'GOOGLE_AI_KEY',label:'Google AI — Imagen4 + Veo3',hint:'aistudio.google.com → API keys',tag:'images+video'},
+  {key:'FLUX_API_KEY',label:'Flux Pro 1.1 Ultra (BFL)',hint:'api.bfl.ai — best for Pinterest',tag:'images'},
+  {key:'OPENAI_API_KEY',label:'OpenAI DALL-E 3 HD',hint:'platform.openai.com/api-keys',tag:'images'},
+  // Video generation
+  {key:'KLING_API_KEY',label:'Kling AI — text-to-video',hint:'klingai.com/api',tag:'video'},
+  {key:'RUNWAY_API_KEY',label:'Runway Gen-3 Alpha',hint:'app.runwayml.com',tag:'video'},
+  {key:'LUMA_API_KEY',label:'Luma Dream Machine',hint:'lumalabs.ai/api',tag:'video'},
+  // Voice
+  {key:'FISH_AUDIO_API_KEY',label:'Fish Audio — Nurse Mike voice',hint:'fish.audio/go-api — needs $2 credits',tag:'voice'},
+  {key:'ELEVENLABS_API_KEY',label:'ElevenLabs (alt voice)',hint:'elevenlabs.io/app/api',tag:'voice'},
+  // Platform
+  {key:'ANTHROPIC_API_KEY',label:'Claude — script analysis',hint:'console.anthropic.com',tag:'AI'},
+  {key:'AIRTABLE_API_KEY',label:'Airtable — Chad briefs',hint:'airtable.com/create/tokens',tag:'data'},
 ];
 
 function SettingsPanel(){
@@ -675,20 +804,28 @@ function SettingsPanel(){
 function HealthPanel({health,loading}){
   if(loading)return <div className="text-gray-400 text-sm pulse">Checking APIs...</div>;
   const services=[
-    {id:'google',label:'Google AI',sub:health?.google?.ok?'Veo3 + Imagen4 ready':'Add billing'},
-    {id:'fishAudio',label:'Fish Audio',sub:health?.fishAudio?.ok?'Voice ready':'Add credits or key'},
-    {id:'airtable',label:'Airtable',sub:health?.airtable?.ok?'Chad briefs connected':'Check key'},
-    {id:'runway',label:'Runway',sub:health?.runway?.ok?'Gen-3 Alpha':'Add RUNWAY_API_KEY'},
-    {id:'elevenlabs',label:'ElevenLabs',sub:health?.elevenlabs?.ok?'Voice ready':'Add ELEVENLABS_API_KEY'},
-    {id:'kling',label:'Kling AI',sub:health?.kling?.ok?'Ready':'Add KLING_API_KEY'},
-    {id:'manim',label:'Manim',sub:health?.manim?.ok?'Diagrams ready':'pip install manim'},
+    {id:'google',label:'Google AI',tag:'Images+Video',sub:health?.google?.ok?'Veo3 ✓  Imagen4 ✓':'Add billing — aistudio.google.com'},
+    {id:'fishAudio',label:'Fish Audio',tag:'Voice',sub:health?.fishAudio?.ok?'Voice ready':health?.fishAudio?.keyValid?'⚠ Add credits fish.audio/go-api':'Add FISH_AUDIO_API_KEY'},
+    {id:'flux',label:'Flux Pro',tag:'Images',sub:health?.flux?.ok?'BFL API ready':'Add FLUX_API_KEY in Settings'},
+    {id:'openai',label:'DALL-E 3',tag:'Images',sub:health?.openai?.ok?'OpenAI ready':'Add OPENAI_API_KEY in Settings'},
+    {id:'airtable',label:'Airtable',tag:'Briefs',sub:health?.airtable?.ok?'Chad briefs connected':'Check AIRTABLE_API_KEY'},
+    {id:'runway',label:'Runway',tag:'Video',sub:health?.runway?.ok?'Gen-3 Alpha':'Add RUNWAY_API_KEY'},
+    {id:'kling',label:'Kling AI',tag:'Video',sub:health?.kling?.ok?'Ready':'Add KLING_API_KEY'},
+    {id:'elevenlabs',label:'ElevenLabs',tag:'Voice',sub:health?.elevenlabs?.ok?'Voice ready':'Add ELEVENLABS_API_KEY'},
+    {id:'manim',label:'Manim',tag:'Diagrams',sub:health?.manim?.ok?'v0.20.1 ready':'uv tool install manim'},
   ];
   return(
-    <div className="grid grid-cols-2 gap-2">
+    <div className="space-y-2">
       {services.map(s=>(
-        <div key={s.id} className="card">
-          <div className="flex items-center"><Dot ok={health?.[s.id]?.ok}/><span className="text-white text-sm font-semibold">{s.label}</span></div>
-          <div className="text-gray-400 text-xs mt-1">{s.sub}</div>
+        <div key={s.id} className="card flex items-center gap-2 py-2">
+          <Dot ok={health?.[s.id]?.ok}/>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-white text-sm font-semibold">{s.label}</span>
+              <span className="text-gray-500 text-xs bg-gray-700 px-1.5 rounded">{s.tag}</span>
+            </div>
+            <div className="text-gray-400 text-xs truncate">{s.sub}</div>
+          </div>
         </div>
       ))}
     </div>
@@ -696,46 +833,85 @@ function HealthPanel({health,loading}){
 }
 
 // ── Asset Grid ─────────────────────────────────────────────────────────────────
+function FolderTree({nodes,depth=0}){
+  const [expanded,setExpanded]=useState({});
+  if(!nodes?.length)return null;
+  return nodes.map((n,i)=>{
+    if(n.type==='folder') return(
+      <div key={i}>
+        <div onClick={()=>setExpanded(e=>({...e,[n.path]:!e[n.path]}))}
+          className="flex items-center gap-1.5 cursor-pointer hover:text-white text-gray-300 py-0.5 text-xs"
+          style={{paddingLeft:depth*12+4}}>
+          <span>{expanded[n.path]?'▾':'▸'}</span>
+          <span>📁</span>
+          <span className="font-medium">{n.name}</span>
+          <span className="text-gray-600 ml-auto">{(n.children||[]).filter(c=>c.type!=='folder').length}</span>
+        </div>
+        {expanded[n.path]&&<FolderTree nodes={n.children} depth={depth+1}/>}
+      </div>
+    );
+    const icon=n.type==='video'?'🎬':'🖼';
+    const url=\`/api/local-asset?path=\${encodeURIComponent(n.path)}\`;
+    return(
+      <div key={i} onClick={()=>window.open(url,'_blank')}
+        className="flex items-center gap-1.5 cursor-pointer hover:bg-gray-700 rounded px-1 py-0.5 text-xs group"
+        style={{paddingLeft:depth*12+8}}>
+        <span>{icon}</span>
+        <span className="text-gray-300 group-hover:text-white truncate flex-1">{n.name}</span>
+        <span className="text-gray-600 shrink-0">{n.size>1e6?(n.size/1e6).toFixed(1)+'M':(n.size/1024).toFixed(0)+'K'}</span>
+      </div>
+    );
+  });
+}
+
 function AssetGrid({assets}){
+  const [view,setView]=useState('folder');
   const [filter,setFilter]=useState('all');
-  const [type,setType]=useState('all');
-  const filtered=useMemo(()=>assets.filter(a=>{
-    const ch=(filter==='all')||a.analysis?.channel===filter;
-    const tp=(type==='all')||a.type===type;
-    return ch&&tp;
-  }),[assets,filter,type]);
+  const [folderTree,setFolderTree]=useState(null);
+  useEffect(()=>{if(view==='folder')api.get('/api/browse-assets').then(d=>setFolderTree(d.tree));},[view]);
+
+  const filtered=useMemo(()=>assets.filter(a=>(filter==='all')||a.analysis?.channel===filter),[assets,filter]);
   return(
     <div>
-      <div className="flex gap-1.5 mb-2 flex-wrap">
-        {['all','tiktok','instagram','youtube','pinterest'].map(f=>(
-          <button key={f} onClick={()=>setFilter(f)}
-            className={\`text-xs px-2.5 py-1 rounded-full font-semibold transition-colors \${filter===f?'bg-sn-teal text-white':'bg-gray-700 text-gray-300 hover:bg-gray-600'}\`}>
-            {f}
-          </button>
-        ))}
-        <span className="mx-1 text-gray-600">|</span>
-        {['all','video','image'].map(f=>(
-          <button key={f} onClick={()=>setType(f)}
-            className={\`text-xs px-2.5 py-1 rounded-full font-semibold transition-colors \${type===f?'bg-sn-yellow text-sn-dark':'bg-gray-700 text-gray-300 hover:bg-gray-600'}\`}>
-            {f}
-          </button>
-        ))}
-        <span className="text-gray-500 text-xs self-center ml-auto">{filtered.length} shown</span>
+      <div className="flex gap-1.5 mb-3">
+        <button onClick={()=>setView('folder')} className={\`text-xs px-2.5 py-1 rounded font-semibold \${view==='folder'?'bg-sn-teal text-white':'bg-gray-700 text-gray-300'}\`}>📁 Folder</button>
+        <button onClick={()=>setView('indexed')} className={\`text-xs px-2.5 py-1 rounded font-semibold \${view==='indexed'?'bg-sn-teal text-white':'bg-gray-700 text-gray-300'}\`}>🔍 Indexed</button>
       </div>
-      <div className="grid grid-cols-2 gap-2 max-h-[55vh] overflow-y-auto pr-1">
-        {filtered.map((a,i)=>(
-          <div key={i} className="card text-xs cursor-pointer" title={a.absPath}
-            onClick={()=>window.open(\`/api/local-asset?path=\${encodeURIComponent(a.absPath)}\`,'_blank')}>
-            <div className="text-gray-200 font-medium leading-tight mb-1.5 line-clamp-2">{a.analysis?.title||a.filename}</div>
-            <div className="flex gap-1 flex-wrap">
-              {a.analysis?.channel&&<span className="bg-gray-700 px-1.5 py-0.5 rounded text-gray-300">{a.analysis.channel}</span>}
-              {a.analysis?.format&&<span className="bg-gray-700 px-1.5 py-0.5 rounded text-gray-300">{a.analysis.format}</span>}
-              <span className={\`px-1.5 py-0.5 rounded \${a.type==='video'?'bg-blue-900 text-blue-300':'bg-purple-900 text-purple-300'}\`}>{a.type}</span>
+
+      {view==='folder'&&(
+        <div className="max-h-[65vh] overflow-y-auto bg-gray-800 rounded-xl p-2">
+          {!folderTree&&<div className="text-gray-500 text-xs pulse p-2">Loading folder...</div>}
+          {folderTree&&<FolderTree nodes={folderTree}/>}
+        </div>
+      )}
+
+      {view==='indexed'&&<>
+        <div className="flex gap-1 mb-2 flex-wrap">
+          {['all','tiktok','instagram','youtube','pinterest'].map(f=>(
+            <button key={f} onClick={()=>setFilter(f)}
+              className={\`text-xs px-2 py-0.5 rounded-full font-semibold transition-colors \${filter===f?'bg-sn-teal text-white':'bg-gray-700 text-gray-300'}\`}>
+              {f}
+            </button>
+          ))}
+          <span className="text-gray-500 text-xs self-center ml-auto">{filtered.length}</span>
+        </div>
+        <div className="space-y-1 max-h-[55vh] overflow-y-auto">
+          {filtered.map((a,i)=>(
+            <div key={i} className="flex items-center gap-2 hover:bg-gray-700 rounded px-2 py-1.5 cursor-pointer text-xs group"
+              onClick={()=>window.open(\`/api/local-asset?path=\${encodeURIComponent(a.absPath)}\`,'_blank')}>
+              <span>{a.type==='video'?'🎬':'🖼'}</span>
+              <div className="flex-1 min-w-0">
+                <div className="text-gray-200 group-hover:text-white truncate">{a.analysis?.title||a.filename}</div>
+                <div className="text-gray-500 flex gap-1">
+                  {a.analysis?.channel&&<span>{a.analysis.channel}</span>}
+                  {a.analysis?.format&&<span>· {a.analysis.format}</span>}
+                  {a.analysis?.qualityScore&&<span>· Q{a.analysis.qualityScore}</span>}
+                </div>
+              </div>
             </div>
-            {a.analysis?.qualityScore&&<div className="text-gray-500 mt-1">Q: {a.analysis.qualityScore}/10</div>}
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      </>}
     </div>
   );
 }
@@ -855,6 +1031,137 @@ function ScriptPanel({brief,onProduce}){
   );
 }
 
+// ── A/B Test Panel ─────────────────────────────────────────────────────────────
+const MODEL_LABELS={'imagen4':'Imagen4 Ultra','flux-pro':'Flux Pro 1.1','dalle3':'DALL-E 3 HD'};
+const MODEL_COLORS={'imagen4':'border-blue-500','flux-pro':'border-purple-500','dalle3':'border-green-500'};
+
+function ABTestPanel({brief}){
+  const [results,setResults]=useState(null);
+  const [sessionId,setSessionId]=useState('');
+  const [loading,setLoading]=useState(false);
+  const [winner,setWinner]=useState('');
+  const [stats,setStats]=useState(null);
+  const [customPrompt,setCustomPrompt]=useState('');
+
+  useEffect(()=>{api.get('/api/ab-stats').then(d=>setStats(d.stats));},[]);
+  useEffect(()=>{if(brief&&!customPrompt)setCustomPrompt('');},[brief]);
+
+  async function runAB(){
+    if(!brief){alert('Select a brief first');return;}
+    setLoading(true);setResults(null);setWinner('');
+    const r=await api.post('/api/generate-ab',{brief,prompt:customPrompt||undefined});
+    setSessionId(r.sessionId);
+    setResults(r.results);
+    setLoading(false);
+  }
+
+  async function pickWinner(model){
+    setWinner(model);
+    const r=await api.post('/api/ab-choice',{sessionId,winner:model});
+    setStats(r.stats);
+  }
+
+  const successResults=results?.filter(r=>r.imageB64&&!r.error)||[];
+  const modelOrder=Object.keys(MODEL_LABELS);
+
+  return(
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-white font-bold text-lg">Pinterest A/B Model Test</div>
+          <div className="text-gray-400 text-sm mt-0.5">
+            {brief?<>Testing: <span className="text-sn-yellow font-semibold">{brief.title}</span></>:'Select a Pinterest brief'}
+          </div>
+        </div>
+        <button onClick={runAB} disabled={loading||!brief}
+          className="btn btn-pink shrink-0">
+          {loading?<span className="pulse">Generating 3 models...</span>:'⚡ Run A/B Test'}
+        </button>
+      </div>
+
+      {/* Model win rate stats */}
+      {stats&&(
+        <div className="card">
+          <div className="text-sn-blue text-xs font-bold uppercase tracking-wider mb-2">Model Win Rates</div>
+          <div className="flex gap-3">
+            {modelOrder.map(m=>{
+              const s=stats[m];const wr=s?.total>0?Math.round(s.winRate*100):null;
+              return(
+                <div key={m} className="flex-1 text-center">
+                  <div className="text-white text-sm font-bold">{MODEL_LABELS[m]}</div>
+                  <div className="text-2xl font-black mt-1" style={{color:wr===null?'#4b5563':wr>=50?'#4ade80':'#f87171'}}>
+                    {wr===null?'—':wr+'%'}
+                  </div>
+                  <div className="text-gray-500 text-xs">{s?.wins??0}W / {s?.total??0} rounds</div>
+                </div>
+              );
+            })}
+          </div>
+          {stats&&Object.values(stats).some(s=>s.total>=5)&&(
+            <div className="mt-2 text-sn-teal text-xs font-semibold">
+              ✅ Auto-selecting top 2 models for production (system learned from {Object.values(stats).reduce((a,s)=>a+s.total,0)} choices)
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Custom prompt override */}
+      <div>
+        <div className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-1">Custom prompt (optional)</div>
+        <textarea value={customPrompt} onChange={e=>setCustomPrompt(e.target.value)} rows={2}
+          placeholder="Leave empty to use brief hook + SimpleNursing brand prompt..."
+          className="text-xs resize-none"/>
+      </div>
+
+      {loading&&(
+        <div className="flex gap-3">
+          {modelOrder.map(m=>(
+            <div key={m} className="flex-1 card text-center">
+              <div className="text-gray-300 font-semibold text-sm mb-3">{MODEL_LABELS[m]}</div>
+              <div className="bg-gray-700 rounded-xl pulse" style={{height:200}}/>
+              <div className="text-gray-500 text-xs mt-2">Generating...</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {results&&(
+        <div>
+          <div className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-3">
+            Pick your favourite — the system learns from your choice
+          </div>
+          <div className="flex gap-3">
+            {results.map(r=>(
+              <div key={r.model} className={\`flex-1 card border-2 transition-all \${winner===r.model?MODEL_COLORS[r.model]+' scale-105':'border-gray-700'}\`}>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-white font-bold text-sm">{MODEL_LABELS[r.model]}</span>
+                  <span className="text-gray-500 text-xs">{r.durationMs?Math.round(r.durationMs/1000)+'s':''}</span>
+                </div>
+                {r.error?(
+                  <div className="text-red-400 text-xs bg-red-900/20 rounded p-2">{r.error.slice(0,120)}</div>
+                ):(
+                  <img src={\`data:image/png;base64,\${r.imageB64}\`} className="w-full rounded-lg mb-2" style={{maxHeight:300,objectFit:'cover'}} alt={r.model}/>
+                )}
+                {!r.error&&(
+                  <button onClick={()=>pickWinner(r.model)}
+                    className={\`btn w-full text-sm \${winner===r.model?'btn-teal':'btn-ghost'}\`}>
+                    {winner===r.model?'✅ Winner!':'Choose this'}
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          {winner&&successResults.length>0&&(
+            <div className="mt-3 text-center text-green-400 text-sm font-semibold">
+              ✅ Saved! {MODEL_LABELS[winner]} wins this round. Using it for production.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -947,10 +1254,10 @@ function App(){
         {/* Right panel — main workspace */}
         <div className="flex-1 flex flex-col bg-gray-900 overflow-hidden">
           {/* Tabs */}
-          <div className="flex border-b border-gray-700 px-5 gap-1 shrink-0">
-            {[['script','📝 Script & Plan'],['voice','🎙 Voice'],['manim','🎬 Diagrams'],['preview','📺 Preview']].map(([id,label])=>(
+          <div className="flex border-b border-gray-700 px-5 gap-1 shrink-0 overflow-x-auto">
+            {[['script','📝 Script'],['ab','🎨 A/B Test'],['voice','🎙 Voice'],['manim','🎬 Diagrams'],['preview','📺 Preview']].map(([id,label])=>(
               <button key={id} onClick={()=>setMainTab(id)}
-                className={\`py-3 px-3 text-sm font-semibold transition-colors \${mainTab===id?'text-white border-b-2 border-sn-teal':'text-gray-400 hover:text-gray-200'}\`}>
+                className={\`py-3 px-3 text-sm font-semibold transition-colors whitespace-nowrap \${mainTab===id?'text-white border-b-2 border-sn-teal':'text-gray-400 hover:text-gray-200'}\`}>
                 {label}
               </button>
             ))}
@@ -958,6 +1265,7 @@ function App(){
 
           <div className="flex-1 overflow-y-auto p-5">
             {mainTab==='script'&&<ScriptPanel brief={selectedBrief} onProduce={handleProduce}/>}
+            {mainTab==='ab'&&<ABTestPanel brief={selectedBrief}/>}
             {mainTab==='voice'&&<VoicePanel brief={selectedBrief}/>}
             {mainTab==='manim'&&<ManimPanel brief={selectedBrief}/>}
             {mainTab==='preview'&&(
