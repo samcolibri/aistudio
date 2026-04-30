@@ -3,13 +3,14 @@ import { useCurrentFrame, interpolate, spring, useVideoConfig, Img, staticFile }
 
 export type MikePose = 'talking' | 'pointing' | 'open_arms' | 'celebrate' | 'sad' | 'idle';
 
+// SVG poses from Canva exports (8 poses — prefer SVG for crisp scaling at any resolution)
 const POSE_FILES: Record<MikePose, string> = {
-  talking:   'mike_pose1_t.png',
-  pointing:  'mike_pose2_t.png',
-  open_arms: 'mike_pose3_t.png',
-  celebrate: 'mike_pose4_t.png',
-  sad:       'mike_pose5_t.png',
-  idle:      'mike_pose1_t.png',
+  talking:   'mike_svg_1.svg',
+  pointing:  'mike_svg_2.svg',
+  open_arms: 'mike_svg_3.svg',
+  celebrate: 'mike_svg_4.svg',
+  sad:       'mike_svg_5.svg',
+  idle:      'mike_svg_6.svg',
 };
 
 interface MikeCharacterProps {
