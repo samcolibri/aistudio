@@ -6,6 +6,8 @@ import { Pinterest, PinterestProps } from './compositions/Pinterest';
 import { YouTube, YouTubeProps } from './compositions/YouTube';
 import { NursingVideoTikTok } from './compositions/NursingVideoTikTok';
 import { NurseMikeYouTube, NURSE_MIKE_YOUTUBE_FRAMES } from './compositions/NurseMikeYouTube';
+import { NurseForgeProduction, NURSE_FORGE_FRAMES, calculateMetadata as forgeCalculateMetadata } from './compositions/NurseForgeProduction';
+import type { ProductionManifest, AssetMap } from './compositions/NurseForgeProduction';
 
 const DEFAULT_TIKTOK: TikTokProps = {
   title: '9 Classes That Get You Into Nursing School',
@@ -74,8 +76,53 @@ const DEFAULT_YOUTUBE: YouTubeProps = {
   stat: '94% of RNs say prereqs were harder than nursing school itself',
 };
 
+const FORGE_DEMO_MANIFEST: ProductionManifest = {
+  briefId: 'demo',
+  channel: 'youtube',
+  title: 'SimpleNursing AI Studio',
+  totalDurationSec: 15,
+  fps: 30,
+  resolution: { width: 1920, height: 1080 },
+  voice: 'This is the SimpleNursing AI Studio. Approve a brief in Airtable and we produce it automatically.',
+  scenes: [
+    { index: 0, startSec: 0, durationSec: 5, text: 'SIMPLENURSING AI STUDIO', mikePose: 'talking', bgType: 'animated_dark', bgPrompt: '', showDiagram: false, diagramTopic: '', diagramPosition: 'right', textStyle: 'hook', emphasis: ['AI', 'STUDIO'] },
+    { index: 1, startSec: 5, durationSec: 5, text: 'Approve in Airtable → Video automatically', mikePose: 'pointing', bgType: 'animated_dark', bgPrompt: '', showDiagram: false, diagramTopic: '', diagramPosition: 'right', textStyle: 'fact', emphasis: ['automatically'] },
+    { index: 2, startSec: 10, durationSec: 5, text: 'Powered by Veo3 · Imagen4 · Manim · Fish Audio', mikePose: 'celebrate', bgType: 'animated_dark', bgPrompt: '', showDiagram: false, diagramTopic: '', diagramPosition: 'right', textStyle: 'cta', emphasis: ['Veo3', 'Imagen4', 'Manim'] },
+  ],
+  thumbnail: { prompt: 'SimpleNursing AI Studio educational video thumbnail' },
+};
+
+const FORGE_DEMO_ASSETS: AssetMap = {
+  voicePath: null,
+  manimVideos: {},
+  backgroundVideos: {},
+};
+
 export const RemotionRoot: React.FC = () => (
   <>
+    <Composition
+      id="NurseForgeProduction"
+      component={NurseForgeProduction}
+      calculateMetadata={forgeCalculateMetadata}
+      durationInFrames={NURSE_FORGE_FRAMES(FORGE_DEMO_MANIFEST)}
+      fps={30}
+      width={1920}
+      height={1080}
+      defaultProps={{ manifest: FORGE_DEMO_MANIFEST, assets: FORGE_DEMO_ASSETS }}
+    />
+    <Composition
+      id="NurseForgeProductionTikTok"
+      component={NurseForgeProduction}
+      calculateMetadata={forgeCalculateMetadata}
+      durationInFrames={NURSE_FORGE_FRAMES({ ...FORGE_DEMO_MANIFEST, resolution: { width: 1080, height: 1920 } })}
+      fps={30}
+      width={1080}
+      height={1920}
+      defaultProps={{
+        manifest: { ...FORGE_DEMO_MANIFEST, channel: 'tiktok', resolution: { width: 1080, height: 1920 } },
+        assets: FORGE_DEMO_ASSETS,
+      }}
+    />
     <Composition
       id="NurseMikeYouTube"
       component={NurseMikeYouTube}

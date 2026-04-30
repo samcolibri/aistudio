@@ -1,16 +1,29 @@
-import React from 'react';
-import { useCurrentFrame, interpolate, spring, useVideoConfig, Img, staticFile } from 'remotion';
+import React, { useState, useEffect } from 'react';
+import { useCurrentFrame, interpolate, spring, useVideoConfig, delayRender, continueRender } from 'remotion';
 
 export type MikePose = 'talking' | 'pointing' | 'open_arms' | 'celebrate' | 'sad' | 'idle';
 
-// SVG poses from Canva exports (8 poses — prefer SVG for crisp scaling at any resolution)
-const POSE_FILES: Record<MikePose, string> = {
-  talking:   'mike_svg_1.svg',
-  pointing:  'mike_svg_2.svg',
-  open_arms: 'mike_svg_3.svg',
-  celebrate: 'mike_svg_4.svg',
-  sad:       'mike_svg_5.svg',
-  idle:      'mike_svg_6.svg',
+// Import PNG poses as webpack bundled assets — avoids HTTP serving issues in headless mode
+// @ts-ignore
+import talkingPng from '../../public/mike_svg_1.png';
+// @ts-ignore
+import pointingPng from '../../public/mike_svg_2.png';
+// @ts-ignore
+import openArmsPng from '../../public/mike_svg_3.png';
+// @ts-ignore
+import celebratePng from '../../public/mike_svg_4.png';
+// @ts-ignore
+import sadPng from '../../public/mike_svg_5.png';
+// @ts-ignore
+import idlePng from '../../public/mike_svg_6.png';
+
+const POSE_SRCS: Record<MikePose, string> = {
+  talking:   talkingPng,
+  pointing:  pointingPng,
+  open_arms: openArmsPng,
+  celebrate: celebratePng,
+  sad:       sadPng,
+  idle:      idlePng,
 };
 
 interface MikeCharacterProps {
@@ -65,6 +78,8 @@ export const MikeCharacter: React.FC<MikeCharacterProps> = ({
       break;
   }
 
+  const src = POSE_SRCS[pose];
+
   return (
     <div style={{
       position: 'absolute', bottom,
@@ -79,7 +94,17 @@ export const MikeCharacter: React.FC<MikeCharacterProps> = ({
       ].join(' '),
       transformOrigin: 'bottom center',
     }}>
-      <Img src={staticFile(POSE_FILES[pose])} style={{ width: '100%', height: 'auto', display: 'block' }} />
+      {src ? (
+        <img src={src} style={{ width: '100%', height: 'auto', display: 'block' }} alt="" />
+      ) : (
+        // Fallback: colored placeholder if no image
+        <div style={{
+          width: '100%', height: 400,
+          background: 'linear-gradient(180deg, #00709c 0%, #75c7e6 100%)',
+          borderRadius: '50% 50% 0 0',
+          opacity: 0.8,
+        }} />
+      )}
     </div>
   );
 };
@@ -90,10 +115,9 @@ interface MikePoseTimelineProps extends Omit<MikeCharacterProps, 'pose'> {
 
 export const MikePoseTimeline: React.FC<MikePoseTimelineProps> = ({ timeline, ...rest }) => {
   const frame = useCurrentFrame();
-  let activePose: MikePose = timeline[0]?.[1] ?? 'idle';
-  let poseStart = 0;
+  let currentPose: MikePose = 'idle';
   for (const [start, pose] of timeline) {
-    if (frame >= start) { activePose = pose; poseStart = start; }
+    if (frame >= start) currentPose = pose;
   }
-  return <MikeCharacter {...rest} pose={activePose} localFrame={frame - poseStart} />;
+  return <MikeCharacter {...rest} pose={currentPose} localFrame={frame} />;
 };

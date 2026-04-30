@@ -24,9 +24,10 @@ import http from 'http'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'fs'
 import { readFile as readFileAsync, writeFile } from 'fs/promises'
 import { join, extname, basename, relative } from 'path'
-import { fetchCreativeApprovedBriefs, fetchBriefByRank } from '../client/airtable.js'
+import { fetchCreativeApprovedBriefs, fetchBriefByRank, fetchBriefById } from '../client/airtable.js'
 import { generateImage } from '../client/google-ai.js'
 import { recordChoice, saveSession, getStats, getBestModels } from '../client/ab-preferences.js'
+import { orchestrate } from '../pipeline/orchestrate.js'
 import type { ContentBrief } from '../types/brief.js'
 
 const ASSETS_DIR = process.env.ASSETS_DIR ?? '/Users/anmolsam/Downloads/aistudio-assets'
@@ -126,16 +127,14 @@ async function checkGoogle() {
 async function checkFishAudio() {
   const key = process.env.FISH_AUDIO_API_KEY
   if (!key) return { ok: false, error: 'FISH_AUDIO_API_KEY not set' }
-  const res = await fetch('https://api.fish.audio/v1/wallet/balance', {
+  // Verify key works by listing 1 model (balance endpoint auth format differs)
+  const res = await fetch('https://api.fish.audio/model?page_size=1', {
     headers: { Authorization: `Bearer ${key}` }
-  })
+  }).catch(() => null)
+  if (!res) return { ok: false, error: 'Fish Audio unreachable' }
   if (res.status === 401) return { ok: false, error: 'Invalid API key' }
-  // 402 = valid key, insufficient balance
-  if (res.status === 402) return { ok: false, keyValid: true, needsCredits: true, error: 'Add credits at fish.audio/go-api' }
   if (!res.ok) return { ok: false, error: `HTTP ${res.status}` }
-  const data = await res.json() as any
-  const balance = data.balance ?? 0
-  return { ok: balance > 0, balance, needsCredits: balance <= 0 }
+  return { ok: true, voice: 'Energetic Male (nurse-mike)', keyValid: true }
 }
 
 async function checkAirtable() {
@@ -191,6 +190,25 @@ async function checkOpenAI() {
     headers: { Authorization: `Bearer ${key}` }
   }).catch(() => null)
   return { ok: !!res?.ok, error: res?.ok ? undefined : 'Check OPENAI_API_KEY' }
+}
+
+async function checkFal() {
+  const key = process.env.FAL_KEY
+  if (!key) return { ok: false, error: 'Set FAL_KEY in Settings' }
+  const res = await fetch('https://fal.run/fal-ai/flux/schnell', {
+    method: 'POST',
+    headers: { Authorization: `Key ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt: 'test', image_size: 'square_hd', num_images: 1 }),
+    signal: AbortSignal.timeout(8000),
+  }).catch(() => null)
+  if (!res) return { ok: false, error: 'fal.ai unreachable' }
+  // 200 or 422 (bad input) both mean key is valid
+  return { ok: res.status < 500, error: res.status >= 500 ? `HTTP ${res.status}` : undefined }
+}
+
+async function checkGlioAPI() {
+  const { checkGlio } = await import('../client/glio.js')
+  return checkGlio()
 }
 
 // ── Browse local assets folder ─────────────────────────────────────────────────
@@ -391,20 +409,44 @@ function listOutput() {
 }
 
 // ── Produce trigger ───────────────────────────────────────────────────────────
-async function triggerProduction(body: { rank?: number }) {
+async function triggerProduction(body: { rank?: number; briefId?: string }) {
   const sessionId = `prod_${Date.now()}`
   sessionLogs.set(sessionId, [])
 
   ;(async () => {
+    const log = (level: 'info' | 'success' | 'warn' | 'error', msg: string) =>
+      pushLog(sessionId, level, msg)
+
     try {
-      pushLog(sessionId, 'info', '🎬 Production session started')
-      const args = ['src/produce-now.ts']
-      if (body.rank) args.push('--rank', String(body.rank))
-      const code = await spawnLogged(sessionId, join(ROOT, 'node_modules/.bin/tsx'), args, ROOT)
-      if (code === 0) pushLog(sessionId, 'success', '\n🎉 Done! Check output/ folder.')
-      else pushLog(sessionId, 'error', `Producer exited with code ${code}`)
+      log('info', '🎬 Production session started')
+
+      // Fetch brief from Airtable
+      let brief: ContentBrief | null = null
+      if (body.briefId) {
+        brief = await fetchBriefById(body.briefId).catch(() => null)
+      } else {
+        const rank = body.rank ?? 1
+        brief = await fetchBriefByRank(rank).catch(() => null)
+        if (!brief) {
+          const briefs = await fetchCreativeApprovedBriefs()
+          brief = briefs[rank - 1] ?? briefs[0] ?? null
+        }
+      }
+
+      if (!brief) {
+        log('error', '✗ No approved brief found. Approve one in Airtable first.')
+        sseEnd(sessionId)
+        return
+      }
+
+      log('info', `📋 Brief: "${brief.title}" [${brief.channel}]`)
+
+      const result = await orchestrate(brief, log)
+
+      log('success', `\n🎉 Done! Video at: ${result.videoOut}`)
+      log('info', `  Output dir: ${result.outDir}`)
     } catch (err) {
-      pushLog(sessionId, 'error', `Fatal: ${String(err)}`)
+      log('error', `Fatal: ${String(err)}`)
     }
     sseEnd(sessionId)
   })()
@@ -437,6 +479,7 @@ const server = http.createServer(async (req, res) => {
       const checks = await Promise.allSettled([
         checkGoogle(), checkFishAudio(), checkAirtable(), checkRunway(),
         checkElevenLabs(), checkKling(), checkManim(), checkFlux(), checkOpenAI(),
+        checkFal(), checkGlioAPI(),
       ])
       const pick = (r: PromiseSettledResult<any>) =>
         r.status === 'fulfilled' ? r.value : { ok: false, error: String((r as any).reason) }
@@ -444,6 +487,7 @@ const server = http.createServer(async (req, res) => {
         google: pick(checks[0]), fishAudio: pick(checks[1]), airtable: pick(checks[2]),
         runway: pick(checks[3]), elevenlabs: pick(checks[4]), kling: pick(checks[5]),
         manim: pick(checks[6]), flux: pick(checks[7]), openai: pick(checks[8]),
+        fal: pick(checks[9]), glio: pick(checks[10]),
       })
     }
     if (path === '/api/browse-assets' && req.method === 'GET') {
@@ -735,6 +779,8 @@ const API_KEYS=[
   {key:'FLUX_API_KEY',label:'Flux Pro 1.1 Ultra (BFL)',hint:'api.bfl.ai — best for Pinterest',tag:'images'},
   {key:'OPENAI_API_KEY',label:'OpenAI DALL-E 3 HD',hint:'platform.openai.com/api-keys',tag:'images'},
   // Video generation
+  {key:'FAL_KEY',label:'fal.ai — Flux/Kling/Veo3/Speech (100+ models)',hint:'fal.ai/dashboard/keys',tag:'video+images'},
+  {key:'GLIO_API_KEY',label:'Glio.io — 111+ AI models unified',hint:'glio.io — paste your token',tag:'video+images'},
   {key:'KLING_API_KEY',label:'Kling AI — text-to-video',hint:'klingai.com/api',tag:'video'},
   {key:'RUNWAY_API_KEY',label:'Runway Gen-3 Alpha',hint:'app.runwayml.com',tag:'video'},
   {key:'LUMA_API_KEY',label:'Luma Dream Machine',hint:'lumalabs.ai/api',tag:'video'},
@@ -810,6 +856,8 @@ function HealthPanel({health,loading}){
     {id:'openai',label:'DALL-E 3',tag:'Images',sub:health?.openai?.ok?'OpenAI ready':'Add OPENAI_API_KEY in Settings'},
     {id:'airtable',label:'Airtable',tag:'Briefs',sub:health?.airtable?.ok?'Chad briefs connected':'Check AIRTABLE_API_KEY'},
     {id:'runway',label:'Runway',tag:'Video',sub:health?.runway?.ok?'Gen-3 Alpha':'Add RUNWAY_API_KEY'},
+    {id:'fal',label:'fal.ai',tag:'100+ Models',sub:health?.fal?.ok?'Flux / Kling / Veo3 / Speech ready':'Add FAL_KEY in Settings'},
+    {id:'glio',label:'Glio.io',tag:'111+ Models',sub:health?.glio?.ok?'111+ models ready':'Add GLIO_API_KEY in Settings'},
     {id:'kling',label:'Kling AI',tag:'Video',sub:health?.kling?.ok?'Ready':'Add KLING_API_KEY'},
     {id:'elevenlabs',label:'ElevenLabs',tag:'Voice',sub:health?.elevenlabs?.ok?'Voice ready':'Add ELEVENLABS_API_KEY'},
     {id:'manim',label:'Manim',tag:'Diagrams',sub:health?.manim?.ok?'v0.20.1 ready':'uv tool install manim'},
@@ -1192,7 +1240,7 @@ function App(){
   },[]);
 
   const handleProduce=useCallback(async(brief)=>{
-    const r=await api.post('/api/produce',{rank:brief.rank});
+    const r=await api.post('/api/produce',{briefId:brief.airtableId,rank:brief.rank});
     setSessionId(r.sessionId);
   },[]);
 
