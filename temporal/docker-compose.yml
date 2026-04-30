@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  temporal:
+    image: temporalio/auto-setup:1.24
+    ports:
+      - "7233:7233"
+    environment:
+      - DB=sqlite
+      - TEMPORAL_BROADCAST_ADDRESS=127.0.0.1
+    volumes:
+      - temporal-data:/var/lib/temporal
+
+  temporal-ui:
+    image: temporalio/ui:2.28.0
+    ports:
+      - "8080:8080"
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:8080
+    depends_on:
+      - temporal
+
+volumes:
+  temporal-data:
