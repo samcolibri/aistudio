@@ -30,7 +30,7 @@ function mapRecord(rec: Airtable.Record<Airtable.FieldSet>): ContentBrief {
     notes:           String(f['Notes'] ?? ''),
     briefApproved:   f['Brief Approved?'] === 'Approved' || f['Brief Approved?'] === true,
     contentApproved: f['Content Approved?'] === 'Approved',
-    creativeApproved: f['Creative Approved'] === 'Approved',
+    creativeApproved: f['Creative Approved?'] === 'Approved',
   }
 }
 
@@ -38,7 +38,7 @@ export async function fetchCreativeApprovedBriefs(): Promise<ContentBrief[]> {
   const records: ContentBrief[] = []
   await base()(TABLE_ID)
     .select({
-      filterByFormula: `{Creative Approved} = "Approved"`,
+      filterByFormula: `{Creative Approved?} = "Approved"`,
       sort: [{ field: 'Rank', direction: 'asc' }],
     })
     .eachPage((page, next) => {
@@ -52,7 +52,7 @@ export async function fetchContentApprovedBriefs(): Promise<ContentBrief[]> {
   const records: ContentBrief[] = []
   await base()(TABLE_ID)
     .select({
-      filterByFormula: `AND({Content Approved?} = "Approved", {Creative Approved} != "Approved")`,
+      filterByFormula: `AND({Content Approved?} = "Approved", {Creative Approved?} != "Approved")`,
       sort: [{ field: 'Rank', direction: 'asc' }],
     })
     .eachPage((page, next) => {

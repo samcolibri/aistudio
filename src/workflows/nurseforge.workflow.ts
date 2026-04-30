@@ -32,6 +32,7 @@ const {
   pushToAirtableActivity,
   markFailedActivity,
   setStatusActivity,
+  getStyleContextActivity,
 } = proxyActivities<typeof activities>({
   startToCloseTimeout: '2h',
   retry: { maximumAttempts: 3, initialInterval: '15s', backoffCoefficient: 2 },
@@ -58,6 +59,18 @@ export async function NurseForgeWorkflow(brief: ContentBrief): Promise<void> {
   })
 
   try {
+    // ── Stage 0: Load asset library style context ─────────────────────────────
+    status = 'loading_style_context'
+    const styleContext = await getStyleContextActivity({
+      channel: brief.channel,
+      topic: brief.title,
+    })
+    if (styleContext) {
+      log.info(`[NurseForge] Style context loaded from asset library`, {
+        preview: styleContext.slice(0, 200),
+      })
+    }
+
     // ── Stage 1: Mark as producing ────────────────────────────────────────────
     status = 'producing'
     await setStatusActivity({ airtableId: brief.airtableId, status: 'Producing' })

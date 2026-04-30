@@ -1,4 +1,5 @@
 export { generateVeo3ClipActivity, generateAllVeo3ClipsActivity } from './generate-veo3.js'
+export { getStyleContextActivity } from './get-style-context.js'
 export { generateInstagramSlidesActivity, generatePinterestPinActivity, generateYouTubeThumbnailActivity } from './generate-imagen4.js'
 export { generateVoiceActivity } from './generate-voice.js'
 export { renderRemotionActivity } from './render-remotion.js'

@@ -1,23 +1,34 @@
 // Veo 3 activity — generates photorealistic video clips via Google AI
 // Each clip = 8 seconds max. Full videos = multiple clips stitched by compose-video
 import { Context } from '@temporalio/activity'
-import { generateVideo, MIKE_CHARACTER } from '../client/google-ai.js'
+import { generateVideo } from '../client/google-ai.js'
 import { ensureDir, writeFile } from '../utils/fs.js'
 import { splitIntoVeoScenes } from '../utils/text.js'
 import path from 'path'
 import type { PersonaId } from '../types/brief.js'
 import { getPersona } from '../personas/index.js'
+import { getStyleContext } from '../indexer/query-assets.js'
 
 const OUTPUT_DIR = process.env.OUTPUT_DIR ?? './output'
 
-// Build a Veo3 prompt for a script scene — includes character desc + action cues
-function buildVeo3Prompt(opts: {
+// Build a Veo3 prompt enriched with style context from indexed assets
+async function buildVeo3Prompt(opts: {
   character: string
   dialogue: string
-  pose?: string
   channel: string
-}): string {
+  topic?: string
+}): Promise<string> {
   const gestureHints = inferGesture(opts.dialogue)
+
+  // Load learned style context from asset library (non-blocking — defaults gracefully)
+  let styleNote = ''
+  try {
+    const ctx = await getStyleContext({ channel: opts.channel, topic: opts.topic })
+    if (ctx.topAssets.length > 0) {
+      styleNote = ctx.veo3StyleGuide
+    }
+  } catch { /* manifest not built yet — use defaults */ }
+
   return [
     opts.character,
     `He/she speaks directly to camera:`,
@@ -26,6 +37,7 @@ function buildVeo3Prompt(opts: {
     opts.channel === 'tiktok'
       ? 'High energy, fast TikTok-native delivery, vertical 9:16 framing.'
       : 'Conversational YouTube teaching style, horizontal 16:9 framing.',
+    styleNote ? `Style reference: ${styleNote.slice(0, 200)}` : '',
     'Photorealistic, broadcast quality, natural skin, sharp focus.',
   ].filter(Boolean).join(' ')
 }
@@ -67,7 +79,7 @@ export async function generateVeo3ClipActivity(input: Veo3ClipInput): Promise<Ve
   const persona = getPersona(personaId)
   const aspectRatio = channel === 'tiktok' ? '9:16' : '16:9'
 
-  const prompt = buildVeo3Prompt({
+  const prompt = await buildVeo3Prompt({
     character: persona.veo3Description,
     dialogue,
     channel,

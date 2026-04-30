@@ -4,7 +4,7 @@
   "description": "SimpleNursing studio-quality social creatives",
   "type": "module",
   "scripts": {
-    "studio": "npx remotion studio src/Root.tsx",
+    "studio": "node node_modules/@remotion/cli/remotion-cli.js studio src/Root.tsx",
     "render": "node render.mjs"
   },
   "dependencies": {

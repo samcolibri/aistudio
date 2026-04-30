@@ -8,3 +8,4 @@ output/
 *.jpg
 *.jpeg
 *.webp
+.asset-manifest.json
