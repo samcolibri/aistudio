@@ -1,0 +1,24 @@
+{
+  "name": "nova-gtm-remotion",
+  "version": "1.0.0",
+  "description": "SimpleNursing studio-quality social creatives",
+  "type": "module",
+  "scripts": {
+    "studio": "npx remotion studio src/Root.tsx",
+    "render": "node render.mjs"
+  },
+  "dependencies": {
+    "remotion": "4.0.450",
+    "@remotion/cli": "4.0.450",
+    "@remotion/renderer": "4.0.450",
+    "@remotion/bundler": "4.0.450",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "dotenv": "^16.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0"
+  }
+}

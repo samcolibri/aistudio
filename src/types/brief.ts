@@ -1,38 +1,37 @@
 export type Channel = 'youtube' | 'tiktok' | 'instagram' | 'pinterest'
 export type ContentType = 'short_video' | 'long_video' | 'carousel' | 'pin'
 export type PersonaId = 'nurse-mike' | 'nurse-alison' | 'jordan' | 'priya' | 'aaliyah' | 'dana'
-export type AspectRatio = '16:9' | '9:16' | '1:1' | '2:3' | '4:5'
 
 export interface ContentBrief {
-  id: string                  // Airtable record ID
+  airtableId: string
+  rank: number
   title: string
-  hook: string                // Opening hook line
-  script: string              // Full approved script
+  hook: string
   keyword: string
   channel: Channel
   contentType: ContentType
   personaId: PersonaId
-  mayaSegment: string         // "17-18" | "19-22" | "23-28"
-  rank: number
+  mayaSegment: '17-18' | '19-22' | '23-28'
   score: number
   businessCase: string
+  contentPreview: string   // V8-approved script
   notes: string
-  status: string              // "Creative Approved" = ready to produce
+  briefApproved: boolean
+  contentApproved: boolean
+  creativeApproved: boolean
 }
 
-export interface ProductionJob {
+export interface ProductionManifest {
   briefId: string
-  brief: ContentBrief
   workflowId: string
-  startedAt: string
-}
-
-export interface ProductionResult {
-  briefId: string
   channel: Channel
-  outputUrl: string           // Final video/image URL on R2
-  thumbnailUrl?: string
-  durationSec?: number
+  outputs: {
+    rawVideo?: string      // Veo3 stitched raw
+    remotionVideo?: string // Remotion-rendered with branding
+    voiceAudio?: string    // Fish Audio narration
+    images?: string[]      // Imagen4 slides
+  }
+  r2Urls: string[]
   totalCostUsd: number
   completedAt: string
 }

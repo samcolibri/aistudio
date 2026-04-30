@@ -1,35 +1,37 @@
 #!/bin/bash
 set -e
-
-echo "=== AI Studio — SimpleNursing ==="
+echo ""
+echo "╔══════════════════════════════════════════════════════╗"
+echo "║   SimpleNursing AI Studio                            ║"
+echo "║   Veo3 + Imagen4 + Fish Audio + Remotion + Temporal  ║"
+echo "╚══════════════════════════════════════════════════════╝"
 echo ""
 
-# Start Temporal server
+# 1. Temporal server
 echo "[1/3] Starting Temporal server..."
 docker compose -f temporal/docker-compose.yml up -d
-echo "      Temporal UI → http://localhost:8080"
-sleep 3
+echo "      → http://localhost:8080"
+sleep 4
 
-# Start worker in background
-echo "[2/3] Starting Temporal worker..."
+# 2. Temporal worker
+echo "[2/3] Starting NurseForge worker..."
 tsx src/worker.ts &
 WORKER_PID=$!
-echo "      Worker PID: $WORKER_PID"
+echo "      PID: $WORKER_PID"
 
-# Start scheduler in background
-echo "[3/3] Starting Airtable scheduler (polls every 30min)..."
+# 3. Scheduler
+echo "[3/3] Starting Airtable scheduler (every 30min)..."
 tsx src/scheduler.ts &
-SCHEDULER_PID=$!
-echo "      Scheduler PID: $SCHEDULER_PID"
+SCHED_PID=$!
+echo "      PID: $SCHED_PID"
 
 echo ""
-echo "All services running. Press Ctrl+C to stop."
+echo "Running. Commands:"
+echo "  npm run list                           — briefs ready to produce"
+echo "  npm run trigger                        — produce top-ranked brief"
+echo "  npm run trigger -- --rank 3            — produce rank 3"
+echo "  npm run approve:creative <workflowId>  — signal Chad approval"
+echo "  npm run remotion:studio                — preview compositions"
 echo ""
-echo "Commands:"
-echo "  npm run list              — list approved briefs ready to produce"
-echo "  npm run trigger           — produce top-ranked brief"
-echo "  npm run trigger <id>      — produce specific Airtable record"
-echo ""
-
-trap "kill $WORKER_PID $SCHEDULER_PID 2>/dev/null; docker compose -f temporal/docker-compose.yml down" EXIT
+trap "kill $WORKER_PID $SCHED_PID 2>/dev/null; docker compose -f temporal/docker-compose.yml down" EXIT
 wait

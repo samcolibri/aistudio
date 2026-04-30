@@ -1,10 +1,15 @@
-import { createWriteStream, mkdirSync } from 'fs'
-import { mkdir } from 'fs/promises'
+import { mkdir, writeFile as fsWrite } from 'fs/promises'
+import { createWriteStream } from 'fs'
 import fetch from 'node-fetch'
 import path from 'path'
 
 export async function ensureDir(dir: string): Promise<void> {
   await mkdir(dir, { recursive: true })
+}
+
+export async function writeFile(filePath: string, data: Buffer): Promise<void> {
+  await ensureDir(path.dirname(filePath))
+  await fsWrite(filePath, data)
 }
 
 export async function downloadFile(url: string, localPath: string): Promise<void> {

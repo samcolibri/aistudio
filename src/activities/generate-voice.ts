@@ -1,89 +1,82 @@
+// Fish Audio S2 Pro voice synthesis — Nurse Mike narration
 import { Context } from '@temporalio/activity'
-import fetch from 'node-fetch'
-import fs from 'fs/promises'
-import path from 'path'
-import { generateVoiceElevenLabs } from '../client/glio.js'
+import { synthesize, VOICE_IDS } from '../client/fish-audio.js'
 import { getPersona } from '../personas/index.js'
-import { downloadFile, ensureDir } from '../utils/fs.js'
-import { splitIntoSceneChunks } from '../utils/text.js'
-import type { GenerateVoiceInput, GenerateVoiceOutput } from '../types/workflow.js'
+import { ensureDir, writeFile } from '../utils/fs.js'
+import { splitIntoVoiceChunks } from '../utils/text.js'
+import path from 'path'
+import type { PersonaId } from '../types/brief.js'
 
 const OUTPUT_DIR = process.env.OUTPUT_DIR ?? './output'
-const FISH_AUDIO_KEY = process.env.FISH_AUDIO_API_KEY
 
-async function synthesizeWithFishAudio(opts: {
-  text: string
-  referenceId: string
-}): Promise<{ buffer: Buffer; durationSec: number }> {
-  const res = await fetch('https://api.fish.audio/v1/tts', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${FISH_AUDIO_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      text: opts.text,
-      reference_id: opts.referenceId,
-      format: 'mp3',
-      mp3_bitrate: 128,
-      normalize: true,
-      latency: 'normal',
-    }),
-  })
-  if (!res.ok) {
-    const err = await res.text()
-    throw new Error(`Fish Audio error ${res.status}: ${err}`)
-  }
-  const buffer = Buffer.from(await res.arrayBuffer())
-  // Estimate duration from file size (128kbps mp3 ≈ 16KB/s)
-  const durationSec = Math.round((buffer.length / 1024) / 16)
-  return { buffer, durationSec }
+export interface GenerateVoiceInput {
+  briefId: string
+  personaId: PersonaId
+  script: string
+  channel: 'youtube' | 'tiktok'
+}
+
+export interface GenerateVoiceOutput {
+  narrationPath: string    // full narration as single mp3
+  chunkPaths: string[]     // individual chunks for lip-sync pairing
+  durationSec: number
+  costUsd: number
 }
 
 export async function generateVoiceActivity(input: GenerateVoiceInput): Promise<GenerateVoiceOutput> {
-  const { briefId, text, voiceId, channel } = input
+  const { briefId, personaId, script, channel } = input
   const logger = Context.current().log
+  const persona = getPersona(personaId)
+
+  // TikTok: slightly faster pacing
+  const speed = channel === 'tiktok' ? 1.1 : 1.0
 
   const dir = path.join(OUTPUT_DIR, briefId, 'voice')
   await ensureDir(dir)
-  const localPath = path.join(dir, 'narration.mp3')
 
-  let durationSec = 0
-  let costUsd = 0
+  logger.info(`[Voice] Fish Audio — ${briefId}`, {
+    persona: persona.name, chars: script.length, channel,
+  })
 
-  if (FISH_AUDIO_KEY) {
-    // Fish Audio S2 Pro — $15/M chars, best quality for Nurse Mike
-    logger.info(`[Voice] Fish Audio synthesis for ${briefId}`, { chars: text.length, channel })
-    const { buffer, durationSec: dur } = await synthesizeWithFishAudio({
-      text,
-      referenceId: voiceId,
-    })
-    await fs.writeFile(localPath, buffer)
-    durationSec = dur
-    costUsd = (text.length / 1_000_000) * 15
-    logger.info(`[Voice] Fish Audio done — ${durationSec}s, $${costUsd.toFixed(4)}`)
+  // Generate full narration as one file
+  const result = await synthesize({
+    text: script,
+    referenceId: persona.voiceId,
+    speed,
+    format: 'mp3',
+    bitrate: 128,
+  })
+
+  const narrationPath = path.join(dir, 'narration.mp3')
+  await writeFile(narrationPath, result.audio)
+
+  // Also split into chunks for scene-by-scene Veo3 pairing
+  // (chunks align with splitIntoVeoScenes output)
+  const chunks = splitIntoVoiceChunks(script)
+  const chunkPaths: string[] = []
+  let totalDuration = result.durationSec
+
+  if (chunks.length > 1) {
+    for (let i = 0; i < chunks.length; i++) {
+      const chunkResult = await synthesize({
+        text: chunks[i],
+        referenceId: persona.voiceId,
+        speed,
+      })
+      const chunkPath = path.join(dir, `chunk_${String(i + 1).padStart(2, '0')}.mp3`)
+      await writeFile(chunkPath, chunkResult.audio)
+      chunkPaths.push(chunkPath)
+    }
   } else {
-    // ElevenLabs via Glio as fallback
-    logger.info(`[Voice] ElevenLabs (Glio) synthesis for ${briefId}`, { chars: text.length })
-    const result = await generateVoiceElevenLabs({
-      text,
-      voice: voiceId,
-      stability: 0.5,
-      similarityBoost: 0.75,
-      speed: input.speed ?? 1.0,
-    })
-    await downloadFile(result.url, localPath)
-    durationSec = result.duration ?? Math.round(text.length / 16)
-    costUsd = result.costUsd
-    logger.info(`[Voice] ElevenLabs done — $${costUsd.toFixed(4)}`)
+    chunkPaths.push(narrationPath)
   }
+
+  logger.info(`[Voice] Done — ${result.durationSec}s, $${result.costUsd.toFixed(4)}`)
 
   return {
-    url: `file://${localPath}`,
-    localPath,
-    durationSec,
-    costUsd,
+    narrationPath,
+    chunkPaths,
+    durationSec: result.durationSec,
+    costUsd: result.costUsd,
   }
 }
-
-export { splitIntoSceneChunks }

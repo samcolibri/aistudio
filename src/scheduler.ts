@@ -1,76 +1,61 @@
+// Polls Airtable every 30min for Creative Approved briefs → dispatches NurseForge workflows
 import 'dotenv/config'
 import { Client, Connection } from '@temporalio/client'
-import { fetchApprovedBriefs, markAsProducing } from './client/airtable.js'
-import type { ContentCreationInput } from './types/workflow.js'
+import { fetchCreativeApprovedBriefs, setProductionStatus } from './client/airtable.js'
+import type { ContentBrief } from './types/brief.js'
 
-const TEMPORAL_ADDRESS = process.env.TEMPORAL_ADDRESS ?? 'localhost:7233'
-const TEMPORAL_NAMESPACE = process.env.TEMPORAL_NAMESPACE ?? 'default'
-const TASK_QUEUE = process.env.TEMPORAL_TASK_QUEUE ?? 'simplenursing-studio'
-const POLL_INTERVAL_MS = 30 * 60 * 1000  // 30 minutes
+const POLL_INTERVAL_MS = 30 * 60 * 1000
+const TASK_QUEUE       = process.env.TEMPORAL_TASK_QUEUE ?? 'simplenursing-studio'
 
-async function getClient(): Promise<Client> {
-  const connection = await Connection.connect({ address: TEMPORAL_ADDRESS })
-  return new Client({ connection, namespace: TEMPORAL_NAMESPACE })
+async function getClient() {
+  const conn = await Connection.connect({ address: process.env.TEMPORAL_ADDRESS ?? 'localhost:7233' })
+  return new Client({ connection: conn, namespace: process.env.TEMPORAL_NAMESPACE ?? 'default' })
 }
 
-async function checkAndDispatch(client: Client) {
-  console.log(`[Scheduler] ${new Date().toISOString()} — polling Airtable for approved briefs`)
+async function dispatch(client: Client, brief: ContentBrief) {
+  const workflowId = `nurseforge-${brief.airtableId}`
 
-  let briefs
+  // Check if already running
   try {
-    briefs = await fetchApprovedBriefs()
+    const handle = client.workflow.getHandle(workflowId)
+    const desc = await handle.describe()
+    if (desc.status.name === 'RUNNING') {
+      console.log(`  [skip] ${workflowId} already running`)
+      return
+    }
+  } catch { /* doesn't exist yet — proceed */ }
+
+  console.log(`  [dispatch] ${workflowId} — #${brief.rank} ${brief.title.slice(0, 50)} [${brief.channel}]`)
+  await client.workflow.start('NurseForgeWorkflow', {
+    taskQueue: TASK_QUEUE,
+    workflowId,
+    args: [brief],
+    workflowExecutionTimeout: '7 days',
+  })
+  await setProductionStatus(brief.airtableId, 'Queued', workflowId)
+}
+
+async function poll(client: Client) {
+  console.log(`\n[Scheduler] ${new Date().toISOString()} — checking Airtable...`)
+  let briefs: ContentBrief[]
+  try {
+    briefs = await fetchCreativeApprovedBriefs()
   } catch (err) {
-    console.error('[Scheduler] Airtable fetch failed:', err)
+    console.error('[Scheduler] Airtable error:', err)
     return
   }
 
-  if (briefs.length === 0) {
-    console.log('[Scheduler] No new approved briefs — sleeping')
-    return
-  }
-
-  console.log(`[Scheduler] Found ${briefs.length} approved briefs — dispatching workflows`)
-
+  console.log(`[Scheduler] ${briefs.length} Creative Approved brief(s)`)
   for (const brief of briefs) {
-    const workflowId = `content-creation-${brief.id}`
-
-    // Check if workflow already running
-    try {
-      const handle = client.workflow.getHandle(workflowId)
-      const desc = await handle.describe()
-      if (desc.status.name === 'RUNNING') {
-        console.log(`[Scheduler] ${workflowId} already running — skip`)
-        continue
-      }
-    } catch {
-      // Workflow doesn't exist yet — proceed
-    }
-
-    console.log(`[Scheduler] Starting workflow — ${workflowId} (${brief.channel}: ${brief.title})`)
-
-    try {
-      const input: ContentCreationInput = { brief }
-      const handle = await client.workflow.start('ContentCreationWorkflow', {
-        taskQueue: TASK_QUEUE,
-        workflowId,
-        args: [input],
-        workflowExecutionTimeout: '6h',
-      })
-
-      await markAsProducing(brief.id, handle.workflowId)
-      console.log(`[Scheduler] Dispatched → ${handle.workflowId}`)
-    } catch (err) {
-      console.error(`[Scheduler] Failed to start ${workflowId}:`, err)
-    }
+    await dispatch(client, brief)
   }
 }
 
 async function main() {
   const client = await getClient()
-  console.log(`[Scheduler] Running — polling every ${POLL_INTERVAL_MS / 60000}min`)
-
+  console.log(`[Scheduler] Started — polling every ${POLL_INTERVAL_MS / 60000}min`)
   while (true) {
-    await checkAndDispatch(client)
+    await poll(client)
     await new Promise(r => setTimeout(r, POLL_INTERVAL_MS))
   }
 }
