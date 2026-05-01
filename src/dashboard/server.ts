@@ -528,6 +528,24 @@ const server = http.createServer(async (req, res) => {
     if (path === '/api/output' && req.method === 'GET') {
       return json(res, listOutput())
     }
+    if (path === '/api/produced-videos' && req.method === 'GET') {
+      const studioBase = process.env.AIRTABLE_STUDIO_BASE ?? 'app4LEuOXBxPArLsr'
+      const studioKey  = process.env.AIRTABLE_STUDIO_KEY  ?? process.env.AIRTABLE_API_KEY!
+      const meta = await fetch(`https://api.airtable.com/v0/meta/bases/${studioBase}/tables`, {
+        headers: { Authorization: `Bearer ${studioKey}` }
+      }).then(r => r.json()) as any
+      const table = (meta.tables ?? []).find((t: any) => t.name === 'Produced Videos')
+      if (!table) return json(res, [])
+      const records: any[] = []
+      let offset: string | undefined
+      do {
+        const url = `https://api.airtable.com/v0/${studioBase}/${table.id}?pageSize=100${offset ? `&offset=${offset}` : ''}`
+        const page = await fetch(url, { headers: { Authorization: `Bearer ${studioKey}` } }).then(r => r.json()) as any
+        records.push(...(page.records ?? []).map((r: any) => ({ id: r.id, ...r.fields })))
+        offset = page.offset
+      } while (offset)
+      return json(res, records.sort((a: any, b: any) => (a.Name ?? '').localeCompare(b.Name ?? '')))
+    }
     if (path === '/api/local-asset' && req.method === 'GET') {
       const assetPath = url.searchParams.get('path') ?? ''
       if (!assetPath || !existsSync(assetPath)) return error(res, 404, 'not found')
@@ -536,9 +554,26 @@ const server = http.createServer(async (req, res) => {
         '.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg',
         '.svg':'image/svg+xml','.mp4':'video/mp4','.mp3':'audio/mpeg','.webm':'video/webm'
       }
-      res.writeHead(200, { 'Content-Type': mime[ext] ?? 'application/octet-stream' })
+      const contentType = mime[ext] ?? 'application/octet-stream'
+      const fileSize = statSync(assetPath).size
       const { createReadStream } = await import('fs')
-      createReadStream(assetPath).pipe(res)
+      const rangeHeader = req.headers['range']
+      if (rangeHeader && contentType.startsWith('video/')) {
+        const [startStr, endStr] = rangeHeader.replace(/bytes=/, '').split('-')
+        const start = parseInt(startStr, 10)
+        const end = endStr ? parseInt(endStr, 10) : fileSize - 1
+        const chunkSize = end - start + 1
+        res.writeHead(206, {
+          'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': chunkSize,
+          'Content-Type': contentType,
+        })
+        createReadStream(assetPath, { start, end }).pipe(res)
+      } else {
+        res.writeHead(200, { 'Content-Type': contentType, 'Content-Length': fileSize, 'Accept-Ranges': 'bytes' })
+        createReadStream(assetPath).pipe(res)
+      }
       return
     }
 
@@ -988,73 +1023,82 @@ function CharactersPanel(){
   );
 }
 
-// ── Output Files ───────────────────────────────────────────────────────────────
-function OutputPanel(){
-  const [files,setFiles]=useState([]);
-  useEffect(()=>{api.get('/api/output').then(setFiles);},[]);
-  const refresh=()=>api.get('/api/output').then(setFiles);
-  if(files.length===0)return(
-    <div className="text-center py-12">
-      <div className="text-4xl mb-3">📁</div>
-      <div className="text-gray-400">No output files yet</div>
-      <div className="text-gray-500 text-sm mt-1">Produce a brief to see videos + images here</div>
-      <button onClick={refresh} className="btn btn-ghost text-xs mt-3">Refresh</button>
-    </div>
-  );
+// ── Brief List Panel ──────────────────────────────────────────────────────────
+function BriefListPanel({briefs,selected,onSelect,search,setSearch}){
   return(
-    <div>
-      <div className="flex justify-between items-center mb-3">
-        <div className="text-gray-400 text-xs font-semibold uppercase tracking-wider">{files.length} output files</div>
-        <button onClick={refresh} className="btn btn-ghost text-xs py-1 px-3">↺ Refresh</button>
+    <div className="w-72 flex-shrink-0 border-r border-gray-700 flex flex-col bg-gray-900 overflow-hidden">
+      <div className="p-3 border-b border-gray-700">
+        <div className="text-white text-sm font-bold mb-2">📋 Approved Briefs</div>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search briefs..." className="text-xs"/>
       </div>
-      <div className="space-y-2 max-h-[60vh] overflow-y-auto">
-        {files.map((f,i)=>{
-          const isVideo=f.file.endsWith('.mp4')||f.file.endsWith('.webm');
-          const isImg=f.file.match(/\\.(png|jpg|jpeg|svg)$/i);
-          const url=\`/api/local-asset?path=\${encodeURIComponent(f.path)}\`;
-          return(
-            <div key={i} className="card flex items-center gap-3">
-              <div className={\`text-2xl \${isVideo?'':'text-purple-400'}\`}>{isVideo?'🎬':isImg?'🖼':'🎙'}</div>
-              <div className="flex-1 min-w-0">
-                <div className="text-white text-sm font-medium truncate">{f.file}</div>
-                <div className="text-gray-500 text-xs">{f.folder} · {(f.size/1024/1024).toFixed(1)}MB</div>
-              </div>
-              <a href={url} target="_blank" className="btn btn-ghost text-xs py-1 px-3 shrink-0">Open</a>
+      <div className="flex-1 overflow-y-auto p-3 space-y-2">
+        {briefs.length===0&&<div className="text-gray-500 text-sm text-center py-8">No briefs found</div>}
+        {briefs.map(b=>(
+          <div key={b.airtableId} onClick={()=>onSelect(b)}
+            className={\`card cursor-pointer \${selected?.airtableId===b.airtableId?'border-sn-teal bg-sn-navy/30':''}\`}>
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              <span className="text-sn-yellow font-bold text-xs">#{b.rank}</span>
+              <ChBadge ch={b.channel}/>
+              <span className="text-green-400 text-xs ml-auto">✓</span>
             </div>
-          );
-        })}
+            <div className="text-white font-semibold text-xs leading-tight mb-1">{b.title}</div>
+            <div className="text-gray-400 text-xs line-clamp-2">{b.hook}</div>
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
-// ── Script & Production Plan ───────────────────────────────────────────────────
-function ScriptPanel({brief,onProduce}){
-  if(!brief)return(
-    <div className="flex flex-col items-center justify-center h-64 text-center">
-      <div className="text-5xl mb-4">🎬</div>
-      <div className="text-gray-400 text-lg font-semibold mb-2">Select a brief from the left</div>
-      <div className="text-gray-500 text-sm">Briefs tab → click any card</div>
+// ── Pipeline Step Bar ──────────────────────────────────────────────────────────
+function PipelineBar({step,setStep,brief}){
+  const steps=[
+    {id:'brief',n:1,label:'Brief'},
+    {id:'script',n:2,label:'Script'},
+    {id:'produce',n:3,label:'Produce'},
+    {id:'output',n:4,label:'Output'},
+  ];
+  return(
+    <div className="flex items-center gap-1 px-5 py-2.5 border-b border-gray-700 bg-gray-900 shrink-0 overflow-x-auto">
+      {steps.map((s,i)=>(
+        <React.Fragment key={s.id}>
+          <button onClick={()=>setStep(s.id)}
+            className={\`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap \${step===s.id?'bg-sn-teal text-white':'text-gray-400 hover:text-gray-200 hover:bg-gray-800'}\`}>
+            <span className={\`w-5 h-5 rounded-full text-xs font-black flex items-center justify-center \${step===s.id?'bg-white text-sn-teal':'bg-gray-700 text-gray-400'}\`}>{s.n}</span>
+            {s.label}
+          </button>
+          {i<steps.length-1&&<span className="text-gray-600 text-sm mx-0.5">›</span>}
+        </React.Fragment>
+      ))}
+      <div className="ml-auto text-gray-500 text-xs truncate max-w-xs hidden md:block pl-4">{brief?.title}</div>
     </div>
   );
+}
+
+// ── Step 1: Brief ──────────────────────────────────────────────────────────────
+function BriefStep({brief,onNext}){
   const steps={
-    tiktok:['🎙 Fish Audio → Nurse Mike voice narration','🎬 Veo3 → 4×8s talking-head clips (9:16)','🎞 Remotion → brand composite (spring animations)','📤 R2 upload → Airtable "Review Ready"'],
-    pinterest:['🎨 Imagen4 Ultra → educational pin (2:3, 1008×1512)','📐 Style from 83 indexed brand assets','📤 R2 upload → Airtable "Review Ready"'],
-    instagram:['🎨 Imagen4 Ultra → 4-8 carousel slides (1:1)','📖 Auto-split content into slides with hook cover','📤 R2 upload → Airtable "Review Ready"'],
-    youtube:['🖼 Imagen4 → click-worthy thumbnail (16:9)','🎙 Fish Audio → full narration track','🎬 Veo3 → 4×8s clips (16:9)','🎞 Remotion → YouTube composition with Mike'],
+    tiktok:['🎙 Fish Audio — Sarah voice narration (~24s, female)','🎬 Veo3 — 4×8s talking-head clips (9:16 vertical)','🎞 Remotion — brand composite with spring animations','📤 GitHub release → Airtable "Final"'],
+    pinterest:['🎨 Imagen4 Ultra — educational pin (2:3 ratio)','📐 Style from 83 indexed brand assets','📤 GitHub release → Airtable "Final"'],
+    instagram:['🎨 PIL / Imagen4 — carousel slides (1:1)','📖 Auto-split content into slides with hook cover','📤 GitHub release → Airtable "Final"'],
+    youtube:['🖼 Imagen4 — click-worthy thumbnail (16:9)','🎙 Fish Audio — full narration track','🎬 Veo3 — 4×8s clips (16:9)','🎞 Remotion — YouTube composition'],
   };
   return(
-    <div className="space-y-4">
+    <div className="space-y-5 max-w-2xl">
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2 mb-1"><span className="text-sn-yellow font-bold">#{brief.rank}</span><ChBadge ch={brief.channel}/></div>
-          <h2 className="text-white text-xl font-bold leading-tight">{brief.title}</h2>
+        <div className="flex-1">
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
+            <span className="text-sn-yellow font-black text-lg">#{brief.rank}</span>
+            <ChBadge ch={brief.channel}/>
+            <span className="text-green-400 text-xs font-semibold bg-green-900/30 px-2 py-0.5 rounded-full">✓ Creative Approved</span>
+          </div>
+          <h1 className="text-white text-2xl font-black leading-tight">{brief.title}</h1>
         </div>
-        <button onClick={()=>onProduce(brief)} className="btn btn-pink text-sm shrink-0">▶ Produce Now</button>
+        <button onClick={onNext} className="btn btn-teal shrink-0">2 Script →</button>
       </div>
       <div className="card">
         <div className="text-sn-blue text-xs font-bold uppercase tracking-wider mb-2">Hook</div>
-        <div className="text-white text-sm leading-relaxed">{brief.hook}</div>
+        <div className="text-white text-base leading-relaxed">{brief.hook}</div>
       </div>
       {brief.contentPreview&&(
         <div className="card">
@@ -1210,27 +1254,250 @@ function ABTestPanel({brief}){
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// MAIN APP
-// ═══════════════════════════════════════════════════════════════════════════════
-const SIDEBAR_TABS=[
-  {id:'briefs',icon:'📋',label:'Briefs'},
-  {id:'assets',icon:'🎨',label:'Assets'},
-  {id:'characters',icon:'🧑‍⚕️',label:'Mike'},
-  {id:'health',icon:'⚡',label:'APIs'},
-  {id:'settings',icon:'⚙️',label:'Settings'},
-  {id:'output',icon:'📁',label:'Output'},
-];
+// ── Step 2: Script Review ──────────────────────────────────────────────────────
+function ScriptStep({brief,onNext}){
+  const [voiceText,setVoiceText]=useState(brief?.hook||'');
+  const [voiceLoading,setVoiceLoading]=useState(false);
+  const [audioSrc,setAudioSrc]=useState('');
+  const [voiceErr,setVoiceErr]=useState('');
+  useEffect(()=>{setVoiceText(brief?.hook||'');setAudioSrc('');},[brief]);
 
+  async function previewVoice(){
+    setVoiceLoading(true);setVoiceErr('');setAudioSrc('');
+    try{
+      const r=await api.post('/api/voice-preview',{text:voiceText.slice(0,200)});
+      if(r.error)throw new Error(r.error);
+      setAudioSrc(\`data:audio/mp3;base64,\${r.audio}\`);
+    }catch(e){setVoiceErr(String(e));}
+    setVoiceLoading(false);
+  }
+
+  return(
+    <div className="space-y-5 max-w-2xl">
+      <div className="flex items-center justify-between">
+        <h2 className="text-white text-xl font-bold">Script Review</h2>
+        <button onClick={onNext} className="btn btn-pink">3 Produce →</button>
+      </div>
+      <div className="card">
+        <div className="text-sn-blue text-xs font-bold uppercase tracking-wider mb-2">Opening Hook</div>
+        <div className="text-white text-base leading-relaxed font-semibold">{brief.hook}</div>
+      </div>
+      {brief.contentPreview&&(
+        <div className="card">
+          <div className="text-sn-blue text-xs font-bold uppercase tracking-wider mb-2">Full Script</div>
+          <div className="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap max-h-64 overflow-y-auto">
+            {brief.contentPreview}
+          </div>
+        </div>
+      )}
+      <div className="card">
+        <div className="text-sn-blue text-xs font-bold uppercase tracking-wider mb-3">🎙 Voice Preview — Sarah (Female)</div>
+        <textarea value={voiceText} onChange={e=>setVoiceText(e.target.value)} rows={3}
+          placeholder="Text to speak..." className="text-sm resize-none mb-2"/>
+        <div className="flex gap-2 items-center">
+          <button onClick={previewVoice} disabled={voiceLoading||!voiceText} className="btn btn-teal">
+            {voiceLoading?'Generating...':'▶ Preview Voice'}
+          </button>
+          <span className="text-gray-500 text-xs">{voiceText.length}/200</span>
+        </div>
+        {voiceErr&&<div className="text-red-400 text-xs mt-2">{voiceErr}</div>}
+        {audioSrc&&<audio controls src={audioSrc} className="w-full mt-3"/>}
+      </div>
+    </div>
+  );
+}
+
+// ── Step 3: Produce ────────────────────────────────────────────────────────────
+function ProduceStep({brief,onDone}){
+  const [sessionId,setSessionId]=useState('');
+  const [started,setStarted]=useState(false);
+  const {logs,done,bottomRef}=useSSE(sessionId);
+
+  async function startProduce(){
+    setStarted(true);
+    const r=await api.post('/api/produce',{briefId:brief.airtableId,rank:brief.rank});
+    setSessionId(r.sessionId);
+  }
+
+  return(
+    <div className="space-y-5 max-w-2xl">
+      <div className="flex items-center justify-between">
+        <h2 className="text-white text-xl font-bold">Produce</h2>
+        {done&&<button onClick={onDone} className="btn btn-teal">4 Output →</button>}
+      </div>
+      <div className="card flex items-center gap-3">
+        <div className="flex-1">
+          <div className="text-white font-bold text-sm">{brief.title}</div>
+          <div className="flex items-center gap-2 mt-1"><ChBadge ch={brief.channel}/><span className="text-gray-400 text-xs truncate">{brief.hook.slice(0,80)}</span></div>
+        </div>
+      </div>
+      {!started&&(
+        <div className="text-center py-10">
+          <div className="text-6xl mb-4">🎬</div>
+          <div className="text-gray-300 text-lg font-semibold mb-2">Ready to produce?</div>
+          <div className="text-gray-500 text-sm mb-6">Runs full AI pipeline: voice → video → composite → upload</div>
+          <button onClick={startProduce} className="btn btn-pink text-base px-8 py-3">▶ Start Production</button>
+        </div>
+      )}
+      {sessionId&&(
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Live Log</span>
+            {!done&&<span className="text-yellow-400 text-xs pulse">● running</span>}
+            {done&&<span className="text-green-400 text-xs">● complete</span>}
+          </div>
+          <div className="bg-gray-950 border border-gray-700 rounded-xl p-4 h-72 overflow-y-auto font-mono text-xs space-y-px">
+            {logs.map((l,i)=><div key={i} className={\`log-\${l.level}\`}>{l.msg}</div>)}
+            <div ref={bottomRef}/>
+          </div>
+          {done&&(
+            <div className="mt-4 flex gap-3">
+              <button onClick={onDone} className="btn btn-teal">📁 View Output →</button>
+              <a href="http://localhost:3003" target="_blank" className="btn btn-ghost">📺 Remotion Studio</a>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Step 4: Output ─────────────────────────────────────────────────────────────
+function OutputStep({brief}){
+  const [files,setFiles]=useState([]);
+  const [loading,setLoading]=useState(true);
+
+  const refresh=useCallback(()=>{
+    setLoading(true);
+    api.get('/api/output').then(all=>{
+      setFiles(all.filter(f=>f.folder===brief.airtableId));
+      setLoading(false);
+    }).catch(()=>setLoading(false));
+  },[brief?.airtableId]);
+
+  useEffect(()=>refresh(),[refresh]);
+
+  if(loading)return <div className="text-gray-400 text-sm pulse p-4">Loading output files...</div>;
+
+  if(files.length===0)return(
+    <div className="text-center py-16">
+      <div className="text-5xl mb-4">📁</div>
+      <div className="text-gray-400 text-lg font-semibold mb-2">No output yet</div>
+      <div className="text-gray-500 text-sm mb-4">Go to step 3 "Produce" and run the pipeline first</div>
+      <button onClick={refresh} className="btn btn-ghost text-xs">↺ Refresh</button>
+    </div>
+  );
+
+  return(
+    <div className="space-y-4 max-w-3xl">
+      <div className="flex items-center justify-between">
+        <div className="text-gray-400 text-xs font-semibold uppercase tracking-wider">{files.length} files produced</div>
+        <button onClick={refresh} className="btn btn-ghost text-xs py-1 px-3">↺ Refresh</button>
+      </div>
+      {files.map((f,i)=>{
+        const isVideo=f.file.match(/\\.(mp4|webm|mov)$/i);
+        const isImg=f.file.match(/\\.(png|jpg|jpeg|svg)$/i);
+        const isAudio=f.file.match(/\\.(mp3|wav)$/i);
+        const url=\`/api/local-asset?path=\${encodeURIComponent(f.path)}\`;
+        return(
+          <div key={i} className="card">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-xl">{isVideo?'🎬':isImg?'🖼':isAudio?'🎙':'📄'}</span>
+              <div className="flex-1">
+                <div className="text-white font-semibold text-sm">{f.file}</div>
+                <div className="text-gray-500 text-xs">{(f.size/1024/1024).toFixed(1)} MB · {new Date(f.mtime).toLocaleTimeString()}</div>
+              </div>
+              <a href={url} target="_blank" className="btn btn-ghost text-xs py-1 px-3 shrink-0">Open ↗</a>
+            </div>
+            {isVideo&&<video controls src={url} className="w-full rounded-lg" style={{maxHeight:420}}/>}
+            {isImg&&<img src={url} alt={f.file} className="w-full rounded-lg object-contain" style={{maxHeight:400}}/>}
+            {isAudio&&<audio controls src={url} className="w-full"/>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── AI Videos Gallery (Airtable — all 18 produced assets) ─────────────────────
+function VideosGallery(){
+  const [records,setRecords]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [filter,setFilter]=useState('all');
+  const [preview,setPreview]=useState(null);
+  useEffect(()=>{api.get('/api/produced-videos').then(d=>{setRecords(d);setLoading(false);}).catch(()=>setLoading(false));},[]);
+  const filtered=useMemo(()=>records.filter(r=>{
+    if(filter==='all')return true;
+    if(filter==='Videos')return r['GitHub URL']&&(r['GitHub URL'].endsWith('.mp4')||r['GitHub URL'].endsWith('.webm'));
+    if(filter==='Images')return r['GitHub URL']&&r['GitHub URL'].match(/\\.(png|jpg|jpeg)$/i);
+    return true;
+  }),[records,filter]);
+  if(loading)return <div className="text-gray-400 text-sm pulse p-6">Loading from Airtable...</div>;
+  return(
+    <div className="max-w-4xl">
+      <div className="flex items-center gap-3 mb-4">
+        <h2 className="text-white text-xl font-bold">AI Produced Assets</h2>
+        <span className="text-gray-500 text-sm">{records.length} total</span>
+      </div>
+      <div className="flex gap-1.5 mb-4">
+        {['all','Videos','Images'].map(t=>(
+          <button key={t} onClick={()=>setFilter(t)}
+            className={\`text-xs px-3 py-1.5 rounded-full font-semibold \${filter===t?'bg-sn-teal text-white':'bg-gray-700 text-gray-300 hover:bg-gray-600'}\`}>
+            {t==='all'?\`All (\${records.length})\`:t}
+          </button>
+        ))}
+      </div>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        {filtered.map((r,i)=>{
+          const isVideo=r['GitHub URL']&&(r['GitHub URL'].endsWith('.mp4')||r['GitHub URL'].endsWith('.webm'));
+          const isImg=r['GitHub URL']&&r['GitHub URL'].match(/\\.(png|jpg|jpeg)$/i);
+          const statusColor=r.Status==='Final'?'text-green-400':r.Status==='Draft'?'text-yellow-400':'text-gray-400';
+          return(
+            <div key={i} className="card">
+              <div className="flex items-start gap-2 mb-2">
+                <span className="text-xl shrink-0">{isVideo?'🎬':isImg?'🖼':'📄'}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-white text-xs font-semibold leading-tight">{r.Name||'Unnamed'}</div>
+                  <div className="flex gap-1.5 mt-0.5 flex-wrap">
+                    {r.Channel&&<span className="text-purple-300 text-xs">{r.Channel}</span>}
+                    {r.Status&&<span className={\`text-xs font-semibold \${statusColor}\`}>· {r.Status}</span>}
+                  </div>
+                </div>
+              </div>
+              {r['GitHub URL']&&(
+                <div className="flex gap-2 mb-2">
+                  <a href={r['GitHub URL']} target="_blank" className="btn btn-teal text-xs py-1 px-3 flex-1 text-center">
+                    {isVideo?'▶ Watch':'🖼 View'}
+                  </a>
+                  {isVideo&&(
+                    <button onClick={()=>setPreview(preview===r['GitHub URL']?null:r['GitHub URL'])}
+                      className="btn btn-ghost text-xs py-1 px-3">
+                      {preview===r['GitHub URL']?'Hide':'Embed'}
+                    </button>
+                  )}
+                </div>
+              )}
+              {preview===r['GitHub URL']&&<video controls src={r['GitHub URL']} className="w-full rounded-lg" style={{maxHeight:300}}/>}
+            </div>
+          );
+        })}
+        {filtered.length===0&&<div className="text-gray-500 text-sm col-span-2 text-center py-8">No assets found</div>}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MAIN APP — Pipeline-first layout
+// ═══════════════════════════════════════════════════════════════════════════════
 function App(){
-  const [sideTab,setSideTab]=useState('briefs');
-  const [mainTab,setMainTab]=useState('script');
+  const [view,setView]=useState('pipeline'); // 'pipeline'|'videos'|'assets'|'mike'|'health'|'settings'
+  const [step,setStep]=useState('brief');
   const [briefs,setBriefs]=useState([]);
   const [assets,setAssets]=useState([]);
   const [health,setHealth]=useState(null);
   const [healthLoading,setHealthLoading]=useState(true);
   const [selectedBrief,setSelectedBrief]=useState(null);
-  const [sessionId,setSessionId]=useState(null);
   const [search,setSearch]=useState('');
 
   useEffect(()=>{
@@ -1239,18 +1506,27 @@ function App(){
     api.get('/api/api-health').then(d=>{setHealth(d);setHealthLoading(false);}).catch(()=>setHealthLoading(false));
   },[]);
 
-  const handleProduce=useCallback(async(brief)=>{
-    const r=await api.post('/api/produce',{briefId:brief.airtableId,rank:brief.rank});
-    setSessionId(r.sessionId);
+  const handleSelectBrief=useCallback((b)=>{
+    setSelectedBrief(b);
+    setStep('brief');
+    setView('pipeline');
   },[]);
 
   const filteredBriefs=useMemo(()=>briefs.filter(b=>
     !search||b.title.toLowerCase().includes(search.toLowerCase())||b.hook.toLowerCase().includes(search.toLowerCase())
   ),[briefs,search]);
 
+  const SIDEBAR=[
+    {id:'pipeline',icon:'📋',label:'Pipeline'},
+    {id:'videos',icon:'🎬',label:'AI Videos'},
+    {id:'assets',icon:'🎨',label:'Assets'},
+    {id:'mike',icon:'🧑‍⚕️',label:'Mike'},
+    {id:'health',icon:'⚡',label:'APIs'},
+    {id:'settings',icon:'⚙️',label:'Settings'},
+  ];
+
   return(
     <div className="min-h-screen flex flex-col">
-      {/* Top bar */}
       <header className="bg-sn-navy border-b border-gray-700 px-5 py-3 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-sn-yellow rounded-lg flex items-center justify-center text-sn-dark font-black text-xs">SN</div>
@@ -1268,63 +1544,60 @@ function App(){
       <div className="flex flex-1 overflow-hidden">
         {/* Icon sidebar */}
         <div className="w-14 flex-shrink-0 border-r border-gray-700 bg-gray-900 flex flex-col items-center py-3 gap-1">
-          {SIDEBAR_TABS.map(t=>(
-            <button key={t.id} onClick={()=>setSideTab(t.id)} title={t.label}
-              className={\`w-10 h-10 rounded-xl flex items-center justify-center text-xl transition-colors \${sideTab===t.id?'bg-sn-teal':'hover:bg-gray-700'}\`}>
+          {SIDEBAR.map(t=>(
+            <button key={t.id} onClick={()=>setView(t.id)} title={t.label}
+              className={\`w-10 h-10 rounded-xl flex items-center justify-center text-xl transition-colors \${view===t.id?'bg-sn-teal':'hover:bg-gray-700'}\`}>
               {t.icon}
             </button>
           ))}
         </div>
 
-        {/* Left panel — 300px */}
-        <div className="w-72 flex-shrink-0 border-r border-gray-700 flex flex-col bg-gray-900 overflow-hidden">
-          <div className="p-3 border-b border-gray-700 text-gray-300 text-sm font-semibold">
-            {SIDEBAR_TABS.find(t=>t.id===sideTab)?.label}
-          </div>
-          <div className="flex-1 overflow-y-auto p-3 space-y-2">
-            {sideTab==='briefs'&&<>
-              <input value={search} onChange={e=>setSearch(e.target.value)}
-                placeholder="Search briefs..." className="mb-2"/>
-              {filteredBriefs.length===0&&<div className="text-gray-500 text-sm text-center py-8">No briefs found</div>}
-              {filteredBriefs.map(b=>(
-                <BriefCard key={b.airtableId} brief={b} selected={selectedBrief?.airtableId===b.airtableId}
-                  onSelect={b=>{setSelectedBrief(b);setMainTab('script');}}/>
-              ))}
-            </>}
-            {sideTab==='assets'&&<AssetGrid assets={assets}/>}
-            {sideTab==='characters'&&<CharactersPanel/>}
-            {sideTab==='health'&&<HealthPanel health={health} loading={healthLoading}/>}
-            {sideTab==='settings'&&<SettingsPanel/>}
-            {sideTab==='output'&&<OutputPanel/>}
-          </div>
-        </div>
+        {/* Pipeline view — brief list + pipeline workspace */}
+        {view==='pipeline'&&(
+          <>
+            <BriefListPanel briefs={filteredBriefs} selected={selectedBrief} onSelect={handleSelectBrief} search={search} setSearch={setSearch}/>
+            <div className="flex-1 flex flex-col bg-gray-900 overflow-hidden">
+              {selectedBrief?(
+                <>
+                  <PipelineBar step={step} setStep={setStep} brief={selectedBrief}/>
+                  <div className="flex-1 overflow-y-auto p-5">
+                    {step==='brief'&&<BriefStep brief={selectedBrief} onNext={()=>setStep('script')}/>}
+                    {step==='script'&&<ScriptStep brief={selectedBrief} onNext={()=>setStep('produce')}/>}
+                    {step==='produce'&&<ProduceStep brief={selectedBrief} onDone={()=>setStep('output')}/>}
+                    {step==='output'&&<OutputStep brief={selectedBrief}/>}
+                  </div>
+                </>
+              ):(
+                <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+                  <div className="text-6xl mb-4">📋</div>
+                  <div className="text-white text-xl font-bold mb-2">Select an approved brief</div>
+                  <div className="text-gray-500 text-sm mb-8">Pick any brief from the left to start the production pipeline</div>
+                  <div className="flex items-center gap-3 text-sm">
+                    <span className="px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-300">1 Brief</span>
+                    <span className="text-gray-600 text-lg">→</span>
+                    <span className="px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-300">2 Script</span>
+                    <span className="text-gray-600 text-lg">→</span>
+                    <span className="px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-300">3 Produce</span>
+                    <span className="text-gray-600 text-lg">→</span>
+                    <span className="px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-300">4 Output</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
+        )}
 
-        {/* Right panel — main workspace */}
-        <div className="flex-1 flex flex-col bg-gray-900 overflow-hidden">
-          {/* Tabs */}
-          <div className="flex border-b border-gray-700 px-5 gap-1 shrink-0 overflow-x-auto">
-            {[['script','📝 Script'],['ab','🎨 A/B Test'],['voice','🎙 Voice'],['manim','🎬 Diagrams'],['preview','📺 Preview']].map(([id,label])=>(
-              <button key={id} onClick={()=>setMainTab(id)}
-                className={\`py-3 px-3 text-sm font-semibold transition-colors whitespace-nowrap \${mainTab===id?'text-white border-b-2 border-sn-teal':'text-gray-400 hover:text-gray-200'}\`}>
-                {label}
-              </button>
-            ))}
-          </div>
-
+        {/* Utility views — full width */}
+        {view!=='pipeline'&&(
           <div className="flex-1 overflow-y-auto p-5">
-            {mainTab==='script'&&<ScriptPanel brief={selectedBrief} onProduce={handleProduce}/>}
-            {mainTab==='ab'&&<ABTestPanel brief={selectedBrief}/>}
-            {mainTab==='voice'&&<VoicePanel brief={selectedBrief}/>}
-            {mainTab==='manim'&&<ManimPanel brief={selectedBrief}/>}
-            {mainTab==='preview'&&(
-              <iframe src="http://localhost:3003" className="w-full rounded-xl border border-gray-700"
-                style={{height:'calc(100vh - 140px)'}} title="Remotion Studio"/>
-            )}
+            {view==='videos'&&<VideosGallery/>}
+            {view==='assets'&&<AssetGrid assets={assets}/>}
+            {view==='mike'&&<CharactersPanel/>}
+            {view==='health'&&<HealthPanel health={health} loading={healthLoading}/>}
+            {view==='settings'&&<SettingsPanel/>}
           </div>
-        </div>
+        )}
       </div>
-
-      {sessionId&&<LogModal sessionId={sessionId} title="AI Production — Live Log" onClose={()=>setSessionId(null)}/>}
     </div>
   );
 }

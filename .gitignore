@@ -2,10 +2,22 @@ node_modules/
 dist/
 output/
 .env
+.asset-manifest.json
+
+# Media files (large binaries — served via GitHub Releases CDN)
 *.mp4
 *.mp3
-*.png
+*.webm
+*.mov
+
+# Images — gitignore by default, except specific tracked assets
 *.jpg
 *.jpeg
 *.webp
-.asset-manifest.json
+# *.png is NOT ignored — logo and Remotion SVG/PNGs are tracked
+
+# Remotion public AI videos (served from GitHub CDN, not git)
+remotion/public/ai-videos/
+
+# Added by ggshield
+.cache_ggshield

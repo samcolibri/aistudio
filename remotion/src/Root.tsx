@@ -8,6 +8,12 @@ import { NursingVideoTikTok } from './compositions/NursingVideoTikTok';
 import { NurseMikeYouTube, NURSE_MIKE_YOUTUBE_FRAMES } from './compositions/NurseMikeYouTube';
 import { NurseForgeProduction, NURSE_FORGE_FRAMES, calculateMetadata as forgeCalculateMetadata } from './compositions/NurseForgeProduction';
 import type { ProductionManifest, AssetMap } from './compositions/NurseForgeProduction';
+import {
+  VideoEditorComposition,
+  DEFAULT_TALKING_HEAD,
+  DEFAULT_VEOTRACK,
+  DEFAULT_GOOGLE_DIRECT,
+} from './compositions/VideoEditorComposition';
 
 const DEFAULT_TIKTOK: TikTokProps = {
   title: '9 Classes That Get You Into Nursing School',
@@ -100,6 +106,36 @@ const FORGE_DEMO_ASSETS: AssetMap = {
 
 export const RemotionRoot: React.FC = () => (
   <>
+    {/* ── AI Video Editor — load produced videos and edit live ── */}
+    <Composition
+      id="TalkingHeadEdit"
+      component={VideoEditorComposition}
+      durationInFrames={750}
+      fps={30}
+      width={1080}
+      height={1920}
+      defaultProps={DEFAULT_TALKING_HEAD}
+    />
+    <Composition
+      id="Veo3Edit"
+      component={VideoEditorComposition}
+      durationInFrames={900}
+      fps={30}
+      width={1080}
+      height={1920}
+      defaultProps={DEFAULT_VEOTRACK}
+    />
+    <Composition
+      id="GoogleDirectEdit"
+      component={VideoEditorComposition}
+      durationInFrames={900}
+      fps={30}
+      width={1080}
+      height={1920}
+      defaultProps={DEFAULT_GOOGLE_DIRECT}
+    />
+
+    {/* ── Original brand compositions ── */}
     <Composition
       id="NurseForgeProduction"
       component={NurseForgeProduction}

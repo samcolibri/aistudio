@@ -8,17 +8,28 @@
     "render": "node render.mjs"
   },
   "dependencies": {
-    "remotion": "4.0.450",
-    "@remotion/cli": "4.0.450",
-    "@remotion/renderer": "4.0.450",
     "@remotion/bundler": "4.0.450",
+    "@remotion/cli": "4.0.450",
+    "@remotion/compositor-darwin-arm64": "^4.0.450",
+    "@remotion/licensing": "^4.0.450",
+    "@remotion/media-parser": "^4.0.450",
+    "@remotion/media-utils": "^4.0.450",
+    "@remotion/player": "^4.0.450",
+    "@remotion/renderer": "4.0.450",
+    "@remotion/streaming": "^4.0.450",
+    "@remotion/studio": "^4.0.450",
+    "@remotion/studio-server": "^4.0.450",
+    "@remotion/studio-shared": "^4.0.450",
+    "@remotion/web-renderer": "^4.0.450",
+    "@remotion/zod-types": "^4.0.450",
+    "dotenv": "^16.0.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "dotenv": "^16.0.0"
+    "remotion": "^4.0.450"
   },
   "devDependencies": {
-    "typescript": "^5.0.0",
     "@types/react": "^18.2.0",
-    "@types/react-dom": "^18.2.0"
+    "@types/react-dom": "^18.2.0",
+    "typescript": "^5.0.0"
   }
 }
