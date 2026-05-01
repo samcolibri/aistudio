@@ -239,19 +239,45 @@ const SceneCaption: React.FC<{
 };
 
 // ── Talking head video player (SadTalker output) ─────────────────────────────
+// Full-screen for TikTok (vertical), right-column for YouTube (horizontal).
+// Always muted — narration audio comes from the top-level <Audio> track only.
 const TalkingHeadPlayer: React.FC<{
   src: string;
   isVertical: boolean;
 }> = ({ src, isVertical }) => {
-  const style: React.CSSProperties = isVertical
-    ? { position: 'absolute', bottom: 0, right: -20, width: 420, height: 560, objectFit: 'cover', borderRadius: '24px 24px 0 0' }
-    : { position: 'absolute', right: 0, bottom: 0, width: '38%', height: '90%', objectFit: 'cover' };
-
+  if (isVertical) {
+    // TikTok: talking head fills full screen, gradient overlay at top/bottom for text legibility
+    return (
+      <AbsoluteFill style={{ zIndex: 1 }}>
+        <OffthreadVideo
+          src={staticFile(src)}
+          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          volume={0}
+        />
+        {/* Dark gradient at top for text */}
+        <div style={{
+          position: 'absolute', top: 0, left: 0, right: 0, height: '45%',
+          background: 'linear-gradient(to bottom, rgba(0,0,0,0.75) 0%, transparent 100%)',
+        }} />
+        {/* Dark gradient at bottom for caption text */}
+        <div style={{
+          position: 'absolute', bottom: 0, left: 0, right: 0, height: '40%',
+          background: 'linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 100%)',
+        }} />
+      </AbsoluteFill>
+    );
+  }
+  // YouTube: talking head on right 40%, fills column
   return (
-    <div style={{ ...style, zIndex: 20, overflow: 'hidden', boxShadow: isVertical ? '0 0 40px rgba(0,112,156,0.4)' : 'none' }}>
-      <OffthreadVideo src={staticFile(src)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-      {/* Subtle glow rim */}
-      <div style={{ position: 'absolute', inset: 0, boxShadow: 'inset 0 0 30px rgba(0,112,156,0.3)', borderRadius: 'inherit' }} />
+    <div style={{
+      position: 'absolute', right: 0, top: 0, bottom: 0, width: '42%',
+      overflow: 'hidden', zIndex: 2,
+    }}>
+      <OffthreadVideo
+        src={staticFile(src)}
+        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+        volume={0}
+      />
     </div>
   );
 };
@@ -272,63 +298,46 @@ const SceneRenderer: React.FC<{
 
   return (
     <AbsoluteFill>
-      {/* ── Background ── */}
-      {scene.bgType === 'veo3_clip' && bgVideoPath ? (
+      {/* ── Background / character ── */}
+      {talkingHeadPath ? (
+        // Talking head fills the frame — it IS the background
+        <TalkingHeadPlayer src={talkingHeadPath} isVertical={isVertical} />
+      ) : scene.bgType === 'veo3_clip' && bgVideoPath ? (
         <AbsoluteFill>
           <OffthreadVideo
             src={staticFile(bgVideoPath)}
             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            volume={0}
           />
-          {/* Darken overlay for legibility */}
           <AbsoluteFill style={{ background: 'rgba(0,0,0,0.45)' }} />
         </AbsoluteFill>
       ) : (
         <DarkBg totalFrames={totalFrames} />
       )}
 
-      {/* ── Character: talking head video (SadTalker) OR static Mike ── */}
-      {talkingHeadPath ? (
-        <TalkingHeadPlayer src={talkingHeadPath} isVertical={isVertical} />
-      ) : isVertical ? (
-        // TikTok layout: Mike bottom-right, large
-        <MikeCharacter
-          pose={scene.mikePose}
-          localFrame={frame}
-          scale={1.6}
-          bottom={60}
-          right={-20}
-        />
+      {/* ── Static Mike (only when no talking head) ── */}
+      {!talkingHeadPath && (isVertical ? (
+        <MikeCharacter pose={scene.mikePose} localFrame={frame} scale={1.6} bottom={60} right={-20} />
       ) : (
-        // YouTube layout: Mike right 38%
         <div style={{
           position: 'absolute', right: 0, top: 0, bottom: 0, width: '38%',
-          display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
-          paddingBottom: 44,
+          display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 44,
         }}>
-          <div style={{
-            position: 'absolute', bottom: 0, left: '50%',
-            transform: 'translateX(-50%)',
-            width: 360, height: 540,
-            background: `radial-gradient(ellipse at 50% 80%, ${C.blue_mid}25 0%, transparent 70%)`,
-          }} />
-          <MikeCharacter
-            pose={scene.mikePose}
-            localFrame={frame}
-            scale={1.45}
-            bottom={44}
-            left={0}
-          />
+          <MikeCharacter pose={scene.mikePose} localFrame={frame} scale={1.45} bottom={44} left={0} />
         </div>
-      )}
+      ))}
 
       {/* ── Caption text ── */}
       <div style={{
         position: 'absolute',
         ...(isVertical
-          ? { bottom: 200, left: 0, right: 0, padding: '0 36px' }
+          ? (talkingHeadPath
+            // Talking head: text in top area so face is visible
+            ? { top: 120, left: 0, right: 0, padding: '0 40px', textAlign: 'center' }
+            : { bottom: 200, left: 0, right: 0, padding: '0 36px' })
           : { left: 60, top: 0, bottom: 0, width: '58%', display: 'flex', alignItems: 'center', padding: '80px 50px 80px 80px' }
         ),
-        zIndex: 20,
+        zIndex: 30,
       }}>
         <SceneCaption
           text={scene.text}
@@ -415,6 +424,23 @@ export const NurseForgeProduction: React.FC<Partial<NurseForgeProps>> = ({
           </Sequence>
         );
       })}
+
+      {/* SimpleNursing logo — always on top, every video */}
+      <div style={{
+        position: 'absolute',
+        top: isVertical ? 28 : 20,
+        left: isVertical ? 28 : 32,
+        zIndex: 100,
+        background: 'rgba(0,0,0,0.45)',
+        borderRadius: 12,
+        padding: isVertical ? '8px 18px' : '6px 14px',
+        backdropFilter: 'blur(8px)',
+      }}>
+        <Img
+          src={staticFile('simplenursing-logo.png')}
+          style={{ height: isVertical ? 36 : 28, width: 'auto', display: 'block' }}
+        />
+      </div>
     </AbsoluteFill>
   );
 };
