@@ -3,17 +3,15 @@
 Evolotion — Agent 1: BriefForge
 ════════════════════════════════════════════════════════════════════
 
-INPUT  : Airtable base appLFh438nLooz6u7  (SimpleNursing content briefs)
-         Fetches ALL rows in real-time, filters Content Approved = Approved
-OUTPUT : output/{brief_id}/agent1_output.json  (one file per brief)
-
-Self-contained — auto-installs its own dependencies.
-Only secret needed: AIRTABLE_API_KEY in a .env file.
+TABLE 1  Content Briefs (Live)   — V1→V5 scripts, Content Approved gate
+TABLE 2  Version 2 (Living)      — Content Brief field, all rows pulled
 
 Usage:
-    python3 agent.py                        list all approved briefs
-    python3 agent.py --all                  process all approved briefs
-    python3 agent.py --brief-id recXXXXX    process one specific brief
+    python3 agent.py                        list Table 1 approved briefs
+    python3 agent.py --all                  process Table 1 approved briefs
+    python3 agent.py --v2                   list Version 2 briefs
+    python3 agent.py --v2 --all             process all Version 2 briefs
+    python3 agent.py --brief-id recXXXXX    process one brief (either table)
 """
 
 import json, sys, os, re, time, argparse
@@ -49,12 +47,18 @@ OUTPUT_DIR = _HERE / "output"
 # HARDCODED CONSTANTS — do not modify without updating Airtable schema
 # ══════════════════════════════════════════════════════════════════════════════
 
-# Airtable identifiers — locked to SimpleNursing content briefs base
-AIRTABLE_BASE_ID  = "appLFh438nLooz6u7"
-AIRTABLE_TABLE_ID = "tbl5P3J8agdY4gNtT"
-AIRTABLE_API_URL  = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE_ID}"
+# Airtable identifiers — locked to SimpleNursing base
+AIRTABLE_BASE_ID   = "appLFh438nLooz6u7"
 
-# Approval gate — only rows matching this field/value are processed
+# Table 1 — Content Briefs (Live) — original V1→V5 pipeline
+TABLE1_ID          = "tbl5P3J8agdY4gNtT"
+TABLE1_NAME        = "Content Briefs (Live)"
+
+# Table 2 — Version 2 (Living) — new structured brief pipeline
+TABLE2_ID          = "tblrwTcoT7YNZhNA6"
+TABLE2_NAME        = "Version 2 (Living)"
+
+# Approval gate for Table 1
 APPROVAL_FIELD = "Content Approved?"
 APPROVAL_VALUE = "Approved"
 
@@ -120,18 +124,15 @@ def _get_api_key() -> str:
     return key
 
 
-def fetch_all_rows() -> list[dict]:
-    """
-    Fetch every row from Airtable. Handles pagination automatically.
-    Airtable returns max 100 rows per page; loops until no offset returned.
-    """
+def _fetch_table(table_id: str) -> list[dict]:
+    """Fetch all rows from any table in the base (paginated)."""
     key     = _get_api_key()
+    url     = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{table_id}"
     headers = {"Authorization": f"Bearer {key}"}
     rows    = []
     params  = {"maxRecords": 100}
-
     while True:
-        resp = httpx.get(AIRTABLE_API_URL, params=params, headers=headers, timeout=30)
+        resp = httpx.get(url, params=params, headers=headers, timeout=30)
         resp.raise_for_status()
         data = resp.json()
         rows += data.get("records", [])
@@ -139,22 +140,29 @@ def fetch_all_rows() -> list[dict]:
         if not offset:
             break
         params = {"maxRecords": 100, "offset": offset}
-
     return rows
 
 
+def fetch_all_rows() -> list[dict]:
+    """Fetch all rows from Table 1 (Content Briefs Live)."""
+    return _fetch_table(TABLE1_ID)
+
+
 def fetch_content_approved() -> list[dict]:
-    """Return only rows where Content Approved? = Approved."""
-    return [
-        r for r in fetch_all_rows()
-        if r["fields"].get(APPROVAL_FIELD) == APPROVAL_VALUE
-    ]
+    """Table 1: return only Content Approved = Approved rows."""
+    return [r for r in fetch_all_rows() if r["fields"].get(APPROVAL_FIELD) == APPROVAL_VALUE]
 
 
-def fetch_by_id(brief_id: str) -> dict:
-    """Fetch a single Airtable row by its record ID."""
+def fetch_v2_all() -> list[dict]:
+    """Table 2 (Version 2 Living): return all rows that have Content Brief."""
+    rows = _fetch_table(TABLE2_ID)
+    return [r for r in rows if r["fields"].get("Content Brief", "").strip()]
+
+
+def fetch_by_id(brief_id: str, table_id: str = TABLE1_ID) -> dict:
+    """Fetch a single row by record ID from the given table."""
     key  = _get_api_key()
-    url  = f"{AIRTABLE_API_URL}/{brief_id}"
+    url  = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{table_id}/{brief_id}"
     resp = httpx.get(url, headers={"Authorization": f"Bearer {key}"}, timeout=30)
     resp.raise_for_status()
     return resp.json()
@@ -316,6 +324,77 @@ def transform(record: dict) -> dict:
     return output
 
 
+def transform_v2(record: dict) -> dict:
+    """
+    Transform one Version 2 (Living) row into a production-ready package.
+    Content lives in 'Content Brief' field (structured markdown).
+    Also reads Scout Sources, Creative Brief, Maya Segment.
+    """
+    fields   = record["fields"]
+    brief_id = record["id"]
+    channel  = fields.get("Channel", "Instagram").lower()
+
+    raw_script   = fields.get("Content Brief", "").strip()
+    feedback     = collect_feedback(fields)
+    fmt          = CHANNEL_FORMATS.get(channel, CHANNEL_FORMATS["instagram"])
+    maya_segment = fields.get("Maya Segment", "")
+
+    output = {
+        "agent":        "BriefForge",
+        "table":        TABLE2_NAME,
+        "version":      "2.0",
+        "processed_at": datetime.now(timezone.utc).isoformat(),
+
+        "brief": {
+            "id":               brief_id,
+            "rank":             fields.get("Rank"),
+            "title":            fields.get("Title", ""),
+            "hook":             fields.get("Hook", ""),
+            "channel":          fields.get("Channel", ""),
+            "type":             fields.get("Type", ""),
+            "keyword":          fields.get("Keyword", ""),
+            "score":            fields.get("Score"),
+            "evidence":         fields.get("Evidence Strength", ""),
+            "readiness":        fields.get("Readiness"),
+            "freshness":        fields.get("Freshness", ""),
+            "maya_segment":     maya_segment,
+            "script_version":   "Content Brief",
+            "brief_approved":   fields.get("Brief Approved?", ""),
+            "content_approved": fields.get("Content Approved?", ""),
+        },
+
+        "script": parse_script(raw_script),
+
+        # Scout Sources — research backing this brief
+        "scout_sources":    fields.get("Scout Sources", ""),
+
+        # Creative Brief — visual direction for image/carousel
+        "creative_brief":   fields.get("Creative Brief", ""),
+
+        # Business Case — why this topic matters for SimpleNursing
+        "business_case":    fields.get("Business Case", ""),
+
+        "chad_feedback":    feedback,
+        "brand":            BRAND,
+
+        "production_notes": {
+            "channel_format":      fmt,
+            "recommended_voice":   f"{BRAND['voice']} ({BRAND['voice_provider']} {BRAND['voice_id']})",
+            "maya_target":         maya_segment,
+            "script_version_used": "Content Brief",
+            "feedback_rounds":     len(feedback),
+            "cta_url":             BRAND["website"],
+            "watermark":           f"{BRAND['website']}  •  {channel.upper()}",
+        },
+    }
+
+    out_dir = OUTPUT_DIR / brief_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "agent1_output.json").write_text(json.dumps(output, indent=2))
+
+    return output
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # CLI
 # ══════════════════════════════════════════════════════════════════════════════
@@ -358,62 +437,106 @@ def _print_result(result: dict):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="BriefForge — scans Airtable live, processes Content Approved briefs",
+        description="BriefForge — reads Airtable live, saves scripts locally",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "Required:\n"
-            "  AIRTABLE_API_KEY in .env   (airtable.com/create/tokens)\n\n"
-            "Examples:\n"
-            "  python3 agent.py                     # list all approved\n"
-            "  python3 agent.py --all               # process all\n"
-            "  python3 agent.py --brief-id recXXX   # process one\n"
+            "Table 1 (Content Briefs Live):\n"
+            "  python3 agent.py                     list approved\n"
+            "  python3 agent.py --all               process all approved\n\n"
+            "Table 2 (Version 2 Living):\n"
+            "  python3 agent.py --v2                list all V2 briefs\n"
+            "  python3 agent.py --v2 --all          process all V2 briefs\n\n"
+            "Single brief:\n"
+            "  python3 agent.py --brief-id recXXX   process one (Table 1)\n"
+            "  python3 agent.py --v2 --brief-id recXXX  process one (Table 2)\n"
         ),
     )
-    parser.add_argument("--all",      action="store_true", help="Process all Content Approved briefs")
-    parser.add_argument("--brief-id", metavar="ID",        help="Process one brief by Airtable record ID")
-    parser.add_argument("--list",     action="store_true", help="List approved briefs without processing")
+    parser.add_argument("--all",      action="store_true", help="Process all briefs")
+    parser.add_argument("--v2",       action="store_true", help="Use Version 2 (Living) table")
+    parser.add_argument("--brief-id", metavar="ID",        help="Process one brief by record ID")
+    parser.add_argument("--list",     action="store_true", help="List briefs without processing")
     args = parser.parse_args()
 
     _print_header()
-    print("\n  Fetching all rows from Airtable (real-time)...\n")
 
-    # ── Fetch ─────────────────────────────────────────────────────────────────
-    if args.brief_id:
-        records = [fetch_by_id(args.brief_id)]
-        print(f"  Fetched 1 brief by ID: {args.brief_id}\n")
+    if args.v2:
+        print(f"\n  Table: {TABLE2_NAME}  [{TABLE2_ID}]")
+        print("  Fetching all rows from Airtable (real-time)...\n")
+
+        if args.brief_id:
+            records = [fetch_by_id(args.brief_id, TABLE2_ID)]
+            print(f"  Fetched 1 V2 brief by ID: {args.brief_id}\n")
+        else:
+            records = fetch_v2_all()
+            print(f"  Found {len(records)} Version 2 briefs with content\n")
+
+        records.sort(key=lambda r: r["fields"].get("Rank") or 999)
+
+        if args.list or (not args.all and not args.brief_id):
+            print(f"  {'#':<4} {'ID':<22} {'Channel':<12} {'Maya':<8} {'Score':<7}  Title")
+            print(f"  {'─' * 85}")
+            for r in records:
+                f = r["fields"]
+                print(
+                    f"  #{str(f.get('Rank','?')):<3} {r['id']:<22} {str(f.get('Channel','')):<12} "
+                    f"{str(f.get('Maya Segment','')):<8} {str(f.get('Score','')):<7}  {str(f.get('Title',''))[:48]}"
+                )
+            print()
+            if not args.all:
+                print("  Pass --v2 --all to process all Version 2 briefs locally.\n")
+                return
+
+        results = []
+        for record in records:
+            if not record["fields"].get("Content Brief", "").strip():
+                print(f"  ⚠  [{record['id']}] no Content Brief — skipping")
+                continue
+            result = transform_v2(record)
+            _print_result(result)
+            results.append(result)
+            time.sleep(0.05)
+
+        print(f"\n{'═' * 62}")
+        print(f"  BriefForge V2 complete — {len(results)} of {len(records)} saved")
+        print(f"  Output: agents/output/")
+        print(f"{'═' * 62}\n")
+        return results
+
     else:
-        records = fetch_content_approved()
-        print(f"  Found {len(records)} {APPROVAL_VALUE} briefs\n")
+        print(f"\n  Table: {TABLE1_NAME}  [{TABLE1_ID}]")
+        print("  Fetching all rows from Airtable (real-time)...\n")
 
-    # Sort by Rank field
-    records.sort(key=lambda r: r["fields"].get("Rank") or 999)
+        if args.brief_id:
+            records = [fetch_by_id(args.brief_id, TABLE1_ID)]
+            print(f"  Fetched 1 brief by ID: {args.brief_id}\n")
+        else:
+            records = fetch_content_approved()
+            print(f"  Found {len(records)} {APPROVAL_VALUE} briefs\n")
 
-    # ── List mode (default when no --all / --brief-id given) ──────────────────
-    if args.list or (not args.all and not args.brief_id):
-        _print_list(records)
-        if not args.all:
-            print("  Pass --all to process all, or --brief-id <id> for one.\n")
-            return
+        records.sort(key=lambda r: r["fields"].get("Rank") or 999)
 
-    # ── Process ───────────────────────────────────────────────────────────────
-    results = []
-    for record in records:
-        label, raw = pick_best_script(record["fields"])
-        if not raw:
-            print(f"  ⚠  [{record['id']}] no script found — skipping")
-            continue
-        result = transform(record)
-        _print_result(result)
-        results.append(result)
-        time.sleep(0.1)  # polite Airtable rate-limit buffer
+        if args.list or (not args.all and not args.brief_id):
+            _print_list(records)
+            if not args.all:
+                print("  Pass --all to process all, or --v2 for Version 2 table.\n")
+                return
 
-    # ── Summary ───────────────────────────────────────────────────────────────
-    print(f"\n{'═' * 62}")
-    print(f"  BriefForge complete — {len(results)} of {len(records)} briefs processed")
-    print(f"  Output directory: agents/output/")
-    print(f"{'═' * 62}\n")
+        results = []
+        for record in records:
+            label, raw = pick_best_script(record["fields"])
+            if not raw:
+                print(f"  ⚠  [{record['id']}] no script found — skipping")
+                continue
+            result = transform(record)
+            _print_result(result)
+            results.append(result)
+            time.sleep(0.1)
 
-    return results
+        print(f"\n{'═' * 62}")
+        print(f"  BriefForge complete — {len(results)} of {len(records)} briefs processed")
+        print(f"  Output: agents/output/")
+        print(f"{'═' * 62}\n")
+        return results
 
 
 if __name__ == "__main__":
