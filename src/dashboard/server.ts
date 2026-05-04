@@ -588,7 +588,15 @@ const server = http.createServer(async (req, res) => {
           try { scripts.push(JSON.parse(readFileSync(f, 'utf8'))) } catch {}
         }
       }
-      scripts.sort((a, b) => (a.brief?.rank ?? 999) - (b.brief?.rank ?? 999))
+      // V2 approved first (ranks 8,12,17,26,29,32,36,38), then Table 1 approved, then rest
+      const V2_APPROVED_RANKS = new Set([8,12,17,26,29,32,36,38])
+      scripts.sort((a, b) => {
+        const aV2 = a.v2_approved && V2_APPROVED_RANKS.has(a.brief?.rank)
+        const bV2 = b.v2_approved && V2_APPROVED_RANKS.has(b.brief?.rank)
+        if (aV2 && !bV2) return -1
+        if (!aV2 && bV2) return 1
+        return (a.brief?.rank ?? 999) - (b.brief?.rank ?? 999)
+      })
       return json(res, scripts)
     }
     if (path === '/api/agent1-refresh' && req.method === 'POST') {
@@ -1565,7 +1573,44 @@ function ScriptsView(){
         )}
 
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
-          {scripts.map(s=>{
+          {/* V2 Approved section */}
+          {scripts.some(s=>s.v2_approved)&&(
+            <div className="px-1 pt-1 pb-0.5">
+              <div className="text-xs font-bold text-sn-yellow uppercase tracking-widest flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-green-400 inline-block"></span>
+                V2 Approved — Ready to Produce
+              </div>
+            </div>
+          )}
+          {scripts.filter(s=>s.v2_approved).map(s=>{
+            const b=s.brief;
+            const sc=s.script;
+            const isSel=selected?.brief?.id===b.id;
+            return(
+              <div key={b.id} onClick={()=>setSelected(s)}
+                className={\`rounded-xl p-3 cursor-pointer transition-colors border \${isSel?'bg-sn-navy border-sn-teal':'hover:bg-gray-800 border-green-800/40 bg-green-950/20'}\`}>
+                <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+                  <span className="text-sn-yellow font-black text-xs">#{b.rank}</span>
+                  <span className={\`\${CH_COLOR[b.channel]??'bg-gray-600'} text-white text-xs font-bold px-1.5 py-0.5 rounded uppercase\`}>{b.channel}</span>
+                  <span className="text-green-400 text-xs font-bold ml-auto">✓ V2</span>
+                </div>
+                <div className="text-white text-xs font-semibold leading-tight line-clamp-2">{b.title}</div>
+                <div className="text-gray-400 text-xs mt-1 truncate">{b.keyword}</div>
+                <div className="flex items-center gap-2 mt-1.5">
+                  <span className="text-xs text-sn-blue">{b.maya_segment} · {sc.word_count}w</span>
+                  {s.creative_brief&&<span className="text-xs text-purple-400">+ Creative</span>}
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Table 1 approved divider */}
+          {scripts.some(s=>!s.v2_approved)&&(
+            <div className="px-1 pt-3 pb-0.5">
+              <div className="text-xs font-bold text-gray-500 uppercase tracking-widest">Table 1 — Content Approved</div>
+            </div>
+          )}
+          {scripts.filter(s=>!s.v2_approved).map(s=>{
             const b=s.brief;
             const sc=s.script;
             const isSel=selected?.brief?.id===b.id;
@@ -1604,8 +1649,14 @@ function ScriptsView(){
                   <div className="flex items-center gap-2 mb-2 flex-wrap">
                     <span className="text-sn-yellow font-black text-base">#{b.rank}</span>
                     <span className={\`\${CH_COLOR[b.channel]??'bg-gray-600'} text-white text-xs font-bold px-2 py-0.5 rounded uppercase\`}>{b.channel}</span>
-                    <span className="text-green-400 text-xs font-semibold bg-green-900/30 px-2 py-0.5 rounded-full">✓ Content Approved</span>
-                    <span className="text-sn-blue text-xs bg-sn-navy/50 px-2 py-0.5 rounded-full">Script: {b.script_version}</span>
+                    {selected.v2_approved
+                      ? <span className="text-green-400 text-xs font-semibold bg-green-900/30 px-2 py-0.5 rounded-full">✓ V2 Approved — Ready to Produce</span>
+                      : <span className="text-green-400 text-xs font-semibold bg-green-900/30 px-2 py-0.5 rounded-full">✓ Content Approved</span>
+                    }
+                    <span className="text-sn-blue text-xs bg-sn-navy/50 px-2 py-0.5 rounded-full">
+                      {selected.v2_approved?'Version 2 (Living)':b.table||'Content Briefs (Live)'}
+                    </span>
+                    {b.maya_segment&&<span className="text-purple-400 text-xs bg-purple-900/30 px-2 py-0.5 rounded-full">Maya {b.maya_segment}</span>}
                     <span className="text-gray-500 text-xs ml-auto">{sc.word_count} words · {sc.char_count} chars</span>
                   </div>
                   <h1 className="text-white text-2xl font-black leading-tight mb-2">{b.title}</h1>
@@ -1647,6 +1698,22 @@ function ScriptsView(){
                       ))}
                     </div>
                   </div>
+                )}
+
+                {/* Creative Brief (V2 only) */}
+                {selected.creative_brief&&(
+                  <div className="card border-purple-800/50 bg-purple-950/20">
+                    <div className="text-purple-400 text-xs font-bold uppercase tracking-widest mb-3">🎨 Creative Brief — Carousel Direction</div>
+                    <div className="text-gray-200 text-sm whitespace-pre-wrap leading-relaxed">{selected.creative_brief}</div>
+                  </div>
+                )}
+
+                {/* Scout Sources (V2 only) */}
+                {selected.scout_sources&&(
+                  <details className="card border-gray-700">
+                    <summary className="text-gray-400 text-xs font-bold uppercase tracking-widest cursor-pointer">📚 Scout Sources (100+ sources researched)</summary>
+                    <div className="text-gray-400 text-xs whitespace-pre-wrap leading-relaxed mt-3">{selected.scout_sources}</div>
+                  </details>
                 )}
 
                 {/* Chad feedback trail */}
