@@ -36,6 +36,7 @@ const PORT = parseInt(process.env.DASHBOARD_PORT ?? '3004')
 const ROOT = process.cwd()
 const ENV_PATH = join(ROOT, '.env')
 const OUTPUT_DIR = join(ROOT, 'output')
+const AGENTS_OUTPUT_DIR = join(ROOT, 'agents', 'output')
 
 // ── Env management ────────────────────────────────────────────────────────────
 function readEnv(): Record<string, string> {
@@ -577,10 +578,36 @@ const server = http.createServer(async (req, res) => {
       return
     }
 
+    if (path === '/api/agent1-scripts' && req.method === 'GET') {
+      const scripts: any[] = []
+      if (existsSync(AGENTS_OUTPUT_DIR)) {
+        for (const entry of readdirSync(AGENTS_OUTPUT_DIR, { withFileTypes: true })) {
+          if (!entry.isDirectory()) continue
+          const f = join(AGENTS_OUTPUT_DIR, entry.name, 'agent1_output.json')
+          if (!existsSync(f)) continue
+          try { scripts.push(JSON.parse(readFileSync(f, 'utf8'))) } catch {}
+        }
+      }
+      scripts.sort((a, b) => (a.brief?.rank ?? 999) - (b.brief?.rank ?? 999))
+      return json(res, scripts)
+    }
+    if (path === '/api/agent1-refresh' && req.method === 'POST') {
+      const sessionId = `a1_${Date.now()}`
+      sessionLogs.set(sessionId, [])
+      ;(async () => {
+        pushLog(sessionId, 'info', '🔬 BriefForge — fetching all Content Approved briefs from Airtable...')
+        const code = await spawnLogged(sessionId, 'python3', ['agents/agent_1_brief_forge.py', '--all'], ROOT)
+        if (code === 0) pushLog(sessionId, 'success', '✅ All scripts refreshed and saved')
+        else pushLog(sessionId, 'error', `BriefForge exited with code ${code}`)
+        sseEnd(sessionId)
+      })()
+      return json(res, { sessionId })
+    }
+
     // SSE streams
-    const sseMatch = path.match(/^\/api\/(produce|manim)\/([^/]+)\/stream$/)
+    const sseMatch = path.match(/^\/api\/(produce|manim|a1)\/([^/]+)\/stream$/)
     if (sseMatch && req.method === 'GET') {
-      const sessionId = sseMatch[2]
+      const sessionId = sseMatch[2]  // works for produce, manim, and a1 prefixes
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' })
       const buffered = sessionLogs.get(sessionId) ?? []
       buffered.forEach(e => res.write(`data: ${JSON.stringify(e)}\n\n`))
@@ -1487,11 +1514,191 @@ function VideosGallery(){
   );
 }
 
+// ── Scripts View — Agent 1 output reader ──────────────────────────────────────
+function ScriptsView(){
+  const [scripts,setScripts]=useState([]);
+  const [selected,setSelected]=useState(null);
+  const [loading,setLoading]=useState(true);
+  const [refreshId,setRefreshId]=useState('');
+  const [refreshing,setRefreshing]=useState(false);
+  const {logs,done,bottomRef}=useSSE(refreshId);
+
+  const load=useCallback(()=>{
+    setLoading(true);
+    api.get('/api/agent1-scripts').then(d=>{setScripts(d);if(!selected&&d.length)setSelected(d[0]);setLoading(false);}).catch(()=>setLoading(false));
+  },[]);
+
+  useEffect(()=>load(),[load]);
+  useEffect(()=>{if(done){load();setRefreshing(false);}},[done]);
+
+  async function refresh(){
+    setRefreshing(true);
+    const r=await api.post('/api/agent1-refresh',{});
+    setRefreshId(r.sessionId);
+  }
+
+  const CH_COLOR={TikTok:'bg-neutral-700',YouTube:'bg-red-800',Instagram:'bg-purple-700',Pinterest:'bg-red-600'};
+
+  if(loading)return <div className="p-8 text-gray-400 text-sm pulse">Loading scripts...</div>;
+
+  return(
+    <div className="flex h-full overflow-hidden">
+      {/* Left: script list */}
+      <div className="w-72 flex-shrink-0 border-r border-gray-700 flex flex-col">
+        <div className="p-3 border-b border-gray-700 flex items-center justify-between gap-2">
+          <div>
+            <div className="text-white text-sm font-bold">Content Scripts</div>
+            <div className="text-gray-500 text-xs">{scripts.length} approved briefs</div>
+          </div>
+          <button onClick={refresh} disabled={refreshing}
+            className={\`btn btn-teal text-xs py-1 px-3 shrink-0 \${refreshing?'opacity-60':''}\`}
+            title="Re-fetch all from Airtable and re-process with Agent 1">
+            {refreshing?<span className="pulse">...</span>:'↺ Refresh'}
+          </button>
+        </div>
+
+        {refreshing&&refreshId&&(
+          <div className="bg-gray-950 border-b border-gray-800 p-3 max-h-40 overflow-y-auto font-mono text-xs space-y-px">
+            {logs.map((l,i)=><div key={i} className={\`log-\${l.level} truncate\`}>{l.msg}</div>)}
+            <div ref={bottomRef}/>
+          </div>
+        )}
+
+        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          {scripts.map(s=>{
+            const b=s.brief;
+            const sc=s.script;
+            const isSel=selected?.brief?.id===b.id;
+            return(
+              <div key={b.id} onClick={()=>setSelected(s)}
+                className={\`rounded-xl p-3 cursor-pointer transition-colors \${isSel?'bg-sn-navy border border-sn-teal':'hover:bg-gray-800 border border-transparent'}\`}>
+                <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+                  <span className="text-sn-yellow font-black text-xs">#{b.rank}</span>
+                  <span className={\`\${CH_COLOR[b.channel]??'bg-gray-600'} text-white text-xs font-bold px-1.5 py-0.5 rounded uppercase\`}>{b.channel}</span>
+                  <span className="text-gray-500 text-xs ml-auto">{sc.word_count}w</span>
+                </div>
+                <div className="text-white text-xs font-semibold leading-tight line-clamp-2">{b.title}</div>
+                <div className="text-gray-500 text-xs mt-1 truncate">{b.hook?.slice(0,70)}</div>
+                <div className="flex items-center gap-2 mt-1.5">
+                  <span className="text-xs text-green-500 font-semibold">{b.script_version}</span>
+                  {s.chad_feedback?.length>0&&<span className="text-xs text-sn-blue">{s.chad_feedback.length} feedback</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Right: script reader */}
+      {selected?(
+        <div className="flex-1 overflow-y-auto p-6 max-w-4xl">
+          {(()=>{
+            const b=selected.brief;
+            const sc=selected.script;
+            const fb=selected.chad_feedback||[];
+            const pn=selected.production_notes||{};
+            return(
+              <div className="space-y-5">
+                {/* Header */}
+                <div>
+                  <div className="flex items-center gap-2 mb-2 flex-wrap">
+                    <span className="text-sn-yellow font-black text-base">#{b.rank}</span>
+                    <span className={\`\${CH_COLOR[b.channel]??'bg-gray-600'} text-white text-xs font-bold px-2 py-0.5 rounded uppercase\`}>{b.channel}</span>
+                    <span className="text-green-400 text-xs font-semibold bg-green-900/30 px-2 py-0.5 rounded-full">✓ Content Approved</span>
+                    <span className="text-sn-blue text-xs bg-sn-navy/50 px-2 py-0.5 rounded-full">Script: {b.script_version}</span>
+                    <span className="text-gray-500 text-xs ml-auto">{sc.word_count} words · {sc.char_count} chars</span>
+                  </div>
+                  <h1 className="text-white text-2xl font-black leading-tight mb-2">{b.title}</h1>
+                  {b.keyword&&<div className="text-gray-400 text-xs">Keyword: <span className="text-sn-teal">{b.keyword}</span></div>}
+                </div>
+
+                {/* Hook */}
+                <div className="bg-sn-navy/40 border border-sn-teal/40 rounded-xl p-4">
+                  <div className="text-sn-teal text-xs font-bold uppercase tracking-widest mb-2">🎣 Hook</div>
+                  <div className="text-sn-yellow text-lg font-bold leading-snug">{b.hook}</div>
+                </div>
+
+                {/* Script body */}
+                {sc.hook&&<div className="card">
+                  <div className="text-gray-400 text-xs font-bold uppercase tracking-widest mb-3">📢 Script — Hook Section</div>
+                  <div className="text-gray-200 text-sm whitespace-pre-wrap leading-relaxed">{sc.hook}</div>
+                </div>}
+
+                <div className="card">
+                  <div className="text-gray-400 text-xs font-bold uppercase tracking-widest mb-3">📖 Script — Body</div>
+                  <div className="text-gray-200 text-sm whitespace-pre-wrap leading-relaxed">{sc.body||sc.full_script}</div>
+                </div>
+
+                {sc.cta&&<div className="bg-sn-pink/10 border border-sn-pink/30 rounded-xl p-4">
+                  <div className="text-sn-pink text-xs font-bold uppercase tracking-widest mb-2">🎯 CTA</div>
+                  <div className="text-white text-sm font-semibold whitespace-pre-wrap">{sc.cta}</div>
+                </div>}
+
+                {/* Visual directions */}
+                {sc.visual_directions?.length>0&&(
+                  <div className="card">
+                    <div className="text-gray-400 text-xs font-bold uppercase tracking-widest mb-3">🎬 Visual Directions ({sc.visual_directions.length})</div>
+                    <div className="space-y-2">
+                      {sc.visual_directions.map((v,i)=>(
+                        <div key={i} className="flex gap-2 text-xs">
+                          <span className="text-sn-teal font-bold shrink-0">[{i+1}]</span>
+                          <span className="text-gray-300">{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Chad feedback trail */}
+                {fb.length>0&&(
+                  <div className="card">
+                    <div className="text-gray-400 text-xs font-bold uppercase tracking-widest mb-3">💬 Chad Feedback Trail ({fb.length} rounds)</div>
+                    <div className="space-y-3">
+                      {fb.map((f,i)=>(
+                        <div key={i} className="border-l-2 border-sn-teal pl-3">
+                          <div className="text-sn-teal text-xs font-bold mb-1">{f.version}</div>
+                          <div className="text-gray-300 text-xs whitespace-pre-wrap leading-relaxed">{f.text}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Production notes */}
+                <div className="card bg-gray-800/50">
+                  <div className="text-gray-400 text-xs font-bold uppercase tracking-widest mb-3">⚙️ Production Notes</div>
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div><span className="text-gray-500">Format:</span> <span className="text-gray-300">{pn.channel_format?.ratio} · {pn.channel_format?.size}</span></div>
+                    <div><span className="text-gray-500">Style:</span> <span className="text-gray-300">{pn.channel_format?.style}</span></div>
+                    <div><span className="text-gray-500">Voice:</span> <span className="text-sn-blue">Sarah (Fish Audio)</span></div>
+                    <div><span className="text-gray-500">Feedback rounds:</span> <span className="text-gray-300">{pn.feedback_rounds}</span></div>
+                    <div><span className="text-gray-500">Script version:</span> <span className="text-green-400 font-semibold">{pn.script_version_used}</span></div>
+                    <div><span className="text-gray-500">CTA:</span> <span className="text-gray-300">{pn.cta_url}</span></div>
+                  </div>
+                </div>
+
+                <div className="text-gray-600 text-xs text-right">Processed: {selected.processed_at?.slice(0,16).replace('T',' ')} UTC</div>
+              </div>
+            );
+          })()}
+        </div>
+      ):(
+        <div className="flex-1 flex items-center justify-center text-center p-8">
+          <div>
+            <div className="text-5xl mb-3">📝</div>
+            <div className="text-gray-400 text-sm">Select a script from the list</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // MAIN APP — Pipeline-first layout
 // ═══════════════════════════════════════════════════════════════════════════════
 function App(){
-  const [view,setView]=useState('pipeline'); // 'pipeline'|'videos'|'assets'|'mike'|'health'|'settings'
+  const [view,setView]=useState('scripts'); // 'scripts'|'pipeline'|'videos'|'assets'|'mike'|'health'|'settings'
   const [step,setStep]=useState('brief');
   const [briefs,setBriefs]=useState([]);
   const [assets,setAssets]=useState([]);
@@ -1517,6 +1724,7 @@ function App(){
   ),[briefs,search]);
 
   const SIDEBAR=[
+    {id:'scripts',icon:'📝',label:'Scripts'},
     {id:'pipeline',icon:'📋',label:'Pipeline'},
     {id:'videos',icon:'🎬',label:'AI Videos'},
     {id:'assets',icon:'🎨',label:'Assets'},
@@ -1538,6 +1746,7 @@ function App(){
         <div className="flex items-center gap-3">
           <a href="http://localhost:3003" target="_blank" className="btn btn-ghost text-xs py-1.5">📺 Remotion</a>
           <div className="text-xs text-gray-500">{briefs.length} briefs · {assets.length} assets</div>
+          <button onClick={()=>setView('scripts')} className="btn btn-ghost text-xs py-1.5">📝 Scripts</button>
         </div>
       </header>
 
@@ -1587,8 +1796,15 @@ function App(){
           </>
         )}
 
+        {/* Scripts view — full-height split pane */}
+        {view==='scripts'&&(
+          <div className="flex-1 overflow-hidden">
+            <ScriptsView/>
+          </div>
+        )}
+
         {/* Utility views — full width */}
-        {view!=='pipeline'&&(
+        {view!=='pipeline'&&view!=='scripts'&&(
           <div className="flex-1 overflow-y-auto p-5">
             {view==='videos'&&<VideosGallery/>}
             {view==='assets'&&<AssetGrid assets={assets}/>}
