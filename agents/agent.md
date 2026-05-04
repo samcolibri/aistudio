@@ -1,5 +1,20 @@
 # Evolotion — 3-Agent Autonomous Content Pipeline
 
+## TL;DR — Clone and Run in 3 Steps
+
+```bash
+git clone https://github.com/samcolibri/aistudio.git
+cd aistudio/agents
+echo "AIRTABLE_API_KEY=your_key_here" > .env
+python3 agent.py --all        # Agent 1 — runs immediately, no other setup needed
+```
+
+`agent.py` is the **self-contained Agent 1** (BriefForge). It auto-installs its own deps (`httpx`, `python-dotenv`), reads `.env`, scans all Airtable rows in real-time, and saves structured scripts to `output/`.
+
+For the full 3-agent pipeline (images + cloud upload) see the sections below.
+
+---
+
 > **Evolotion** is SimpleNursing's autonomous content production system.  
 > A human approves a brief in Airtable. Three AI agents take it from there — script, images, cloud delivery — with a learning brain that improves every run.
 
