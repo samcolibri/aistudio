@@ -1,375 +1,594 @@
-# SimpleNursing AI Studio
+<div align="center">
 
-> **Autonomous content production studio** — from research to published video, with humans in the loop at the approval gate only.
+# EVOLOTION
 
-Built by Colibri Group for SimpleNursing. Powered by Google Veo3, OmniHuman, Fish Audio, Remotion, and a 15-file brand brain.
+### Autonomous Content Production System for SimpleNursing
 
----
-
-## What This Is
-
-Most content studios have 10 humans doing what this system does autonomously:
-
-| Role | What a human does | What this system does |
-|---|---|---|
-| Research | Scans nursing forums, TikTok trends, Reddit | AI scrapes 1000s of sources, scores by potential |
-| Brief writing | Content strategist writes hook + script | AI writes brief, hook, production plan |
-| Approval | Creative director approves | **Chad approves in Airtable** ← only human gate |
-| Voice | Voice actor records | Fish Audio → Sarah voice (female, conversational) |
-| Talking head | Videographer + talent | OmniHuman v1.5 → 24s AI talking head |
-| Video production | Editor + motion designer | Veo3 + Remotion → branded composite |
-| Carousel | Graphic designer | Python PIL → pixel-perfect slides, zero spelling errors |
-| Publishing | Social media manager | Auto-syncs to Airtable + GitHub CDN |
-
-**The human approves once. The AI does the rest.**
+*From research brief to production-ready script — zero human involvement after the approval click*
 
 ---
 
-## System Architecture
+[![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://typescriptlang.org)
+[![Node.js](https://img.shields.io/badge/Node.js-18%2B-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org)
+[![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev)
+[![Airtable](https://img.shields.io/badge/Airtable-Real--time-18BFFF?style=for-the-badge&logo=airtable&logoColor=white)](https://airtable.com)
+[![OpenAI](https://img.shields.io/badge/DALL·E%203-HD-412991?style=for-the-badge&logo=openai&logoColor=white)](https://openai.com)
+[![Ideogram](https://img.shields.io/badge/Ideogram-v2-FF6B35?style=for-the-badge)](https://ideogram.ai)
+[![Microsoft](https://img.shields.io/badge/Microsoft%20Graph-OneDrive-0078D4?style=for-the-badge&logo=microsoftsharepoint&logoColor=white)](https://graph.microsoft.com)
+[![Fish Audio](https://img.shields.io/badge/Fish%20Audio-Sarah%20Voice-00709C?style=for-the-badge)](https://fish.audio)
 
+---
+
+**A human approves a brief in Airtable. Three AI agents take it from there.**
+
+</div>
+
+---
+
+## The Pipeline at a Glance
+
+```mermaid
+flowchart TD
+    A[("🗃️ Airtable\nContent Briefs Base")] -->|"Real-time scan\n(paginated, all rows)"| B
+
+    subgraph AGENT1["🔬 Agent 1 — BriefForge"]
+        B["Filter:\nContent Approved? = Approved"]
+        B --> C["Pick best script version\nV5 → V4 → V3 → V2 → V1"]
+        C --> D["Parse script sections\nHook · Body · CTA · Visual Cues"]
+        D --> E["Collect Chad feedback trail\nV1 → V5 + General"]
+        E --> F[("📄 agent1_output.json")]
+    end
+
+    subgraph AGENT2["🖼️ Agent 2 — ImageForge"]
+        G["Read image prompts\nfrom agent1_output"]
+        G --> H["Run in parallel\n(ThreadPoolExecutor)"]
+        H --> H1["DALL·E 3 HD\nPhotorealistic variants"]
+        H --> H2["Ideogram v2\nGraphic / text variants"]
+        H1 --> I["Auto-score images\n(model × variant × file size)"]
+        H2 --> I
+        I --> J["Select best 1 per model\ndalle3_best.png · ideogram_best.png"]
+        J --> K[("📄 agent2_output.json\n🖼️ images/")]
+    end
+
+    subgraph AGENT3["☁️ Agent 3 — CloudPublish"]
+        L["OAuth2 auth\nMicrosoft Graph API"]
+        L --> M["Create folder hierarchy\nAI Studio / Channel / Title"]
+        M --> N["Upload: script + images"]
+        N --> O["Generate anonymous share links"]
+        O --> P[("📄 agent3_output.json\n🔗 OneDrive URLs")]
+    end
+
+    subgraph BRAIN["🧠 Agent Brain — Super Brain"]
+        Q[("runs.jsonl\nImmutable audit log")]
+        R[("model.json\nDerived model state")]
+        Q --> R
+    end
+
+    F --> G
+    K --> L
+    P --> Q
+    F --> Q
+    K --> Q
+    R -->|"get_context() before each run"| AGENT1
+    R -->|"get_context() before each run"| AGENT2
+
+    style AGENT1 fill:#0a2a3a,stroke:#00709c,color:#fff
+    style AGENT2 fill:#0a2a3a,stroke:#fad74f,color:#fff
+    style AGENT3 fill:#0a2a3a,stroke:#fc3467,color:#fff
+    style BRAIN  fill:#1a1a2e,stroke:#75c7e6,color:#fff
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    EVOLOTION PIPELINE                           │
-└─────────────────────────────────────────────────────────────────┘
 
-  DISCOVER                APPROVE             PRODUCE             PUBLISH
-─────────────         ─────────────        ─────────────       ─────────────
-                                                                
-  AI Research      →   Airtable Brief  →   AI Studio      →   GitHub CDN
-  (1000s sources)      (Chad approves)     (agents run)       + Airtable
-                                                               Asset Library
-                            │
-                            ▼
-               Content Brief (Airtable)
-               ┌─────────────────────┐
-               │ Title               │
-               │ Hook line           │
-               │ Full script         │  ← AI-written, human-approved
-               │ Channel (TikTok/IG) │
-               │ Rank score          │
-               │ Creative Approved ✓ │  ← Chad clicks this
-               └─────────────────────┘
-                            │
-                            ▼
-               AI Studio Dashboard (localhost:3004)
-               ┌─────────────────────────────────┐
-               │                                 │
-               │  1 Brief → 2 Script → 3 Produce → 4 Output  │
-               │                                 │
-               └──────────┬──────────────────────┘
-                          │
-              ┌───────────┼───────────────┐
-              ▼           ▼               ▼
-         Voice Agent  Video Agent    Image Agent
-         (Fish Audio  (OmniHuman +   (Imagen4 +
-          Sarah)       Veo3 + Kling)   PIL + Flux)
-              │           │               │
-              └───────────┴───────────────┘
-                          │
-                          ▼
-               Remotion Studio (localhost:3003)
-               ┌─────────────────────────────────┐
-               │  AI video + brand overlays       │
-               │  Captions + watermark + CTA      │  ← edit live like Adobe
-               │  Export final branded MP4        │
-               └─────────────────────────────────┘
-                          │
-                          ▼
-               GitHub Releases CDN → Airtable Produced Videos
+---
+
+## Approval Pipeline — Three Human Gates
+
+```mermaid
+flowchart LR
+    IDEA["💡 Idea / Research\n(AI-sourced or human)"]
+
+    subgraph G1["Gate 1"]
+        BA["Brief Approved?\n☐ → ✓"]
+    end
+
+    subgraph G2["Gate 2 — Script Gate"]
+        CA["Content Approved?\n☐ → ✓\n\n← THIS triggers Agent 1"]
+    end
+
+    subgraph G3["Gate 3 — Production Gate"]
+        CRA["Creative Approved?\n☐ → ✓\n\n← Unlocks full pipeline"]
+    end
+
+    subgraph PROD["⚙️ Production"]
+        AGT["Agents 1 · 2 · 3\nrun autonomously"]
+    end
+
+    IDEA --> G1 --> G2 --> G3 --> PROD
+
+    style G1  fill:#1a2a1a,stroke:#4CAF50,color:#fff
+    style G2  fill:#0a2a3a,stroke:#00709c,color:#fff
+    style G3  fill:#2a1a2a,stroke:#fc3467,color:#fff
+    style PROD fill:#1a1a2e,stroke:#fad74f,color:#fff
+```
+
+> At peak velocity: **9 Content-Approved** briefs feed Agent 1, **5 Creative-Approved** briefs feed the full pipeline.
+
+---
+
+## Version 2 Living Table — Research-to-Production Flow
+
+```mermaid
+flowchart TD
+    subgraph RESEARCH["🔍 Research Layer (Version 2 Living Table)"]
+        S1["Scout Sources\n100+ URLs per brief"]
+        S2["SERP data\n100K+ monthly searches"]
+        S3["MAYA ICP Signal\nAge 15–18 female, pre-nursing"]
+    end
+
+    subgraph BRIEF["📋 Brief Layer"]
+        B1["Business Case\nWhy this topic wins"]
+        B2["Content Brief\nHook · Script · Angle"]
+        B3["Creative Brief\nVisual direction · Brand overlay"]
+    end
+
+    subgraph READINESS["✅ Readiness Signal"]
+        R1["Readiness: Draft → Ready → Live"]
+        R2["Freshness: Fresh → Stale → Evergreen"]
+        R3["Maya Segment\nICP match score"]
+    end
+
+    subgraph OUTPUT["🚀 Production Ready"]
+        O1["Rank [8,12,17,26,29,32,36,38]\nv2_approved: true"]
+        O2["Surfaced at top of\nScripts dashboard"]
+        O3["Full pipeline eligible"]
+    end
+
+    RESEARCH --> BRIEF --> READINESS --> OUTPUT
+
+    style RESEARCH fill:#0a2a2a,stroke:#75c7e6,color:#fff
+    style BRIEF    fill:#0a1a2a,stroke:#00709c,color:#fff
+    style READINESS fill:#1a2a1a,stroke:#4CAF50,color:#fff
+    style OUTPUT   fill:#2a1a0a,stroke:#fad74f,color:#fff
+```
+
+---
+
+## Agent Brain — Self-Improving Learning Loop
+
+```mermaid
+flowchart LR
+    subgraph INPUTS["Inputs"]
+        I1["Agent name\n(BriefForge / ImageForge)"]
+        I2["Brief ID\n(rec...)"]
+        I3["Channel\n(tiktok / instagram)"]
+    end
+
+    subgraph BRAIN["🧠 Agent Brain"]
+        direction TB
+        B1["log_run()\nAppend to runs.jsonl"]
+        B2["score_run()\nHuman rates quality 0.0–1.0"]
+        B3["register_prompt_winner()\nSave best prompts by channel"]
+        B4["Rebuild model.json\nfrom runs.jsonl"]
+        B5["get_context()\nReturn: avg quality + top prompts"]
+    end
+
+    subgraph OUTPUTS["Outputs"]
+        O1["avg_quality per agent"]
+        O2["top_prompts per channel\n(top 50 reused)"]
+        O3["brief_past_performance"]
+    end
+
+    INPUTS --> B1 --> B4
+    B2 --> B4
+    B3 --> B4
+    B4 --> B5
+    B5 --> OUTPUTS
+    OUTPUTS -->|"injected before next run"| INPUTS
+
+    style BRAIN fill:#1a1a2e,stroke:#75c7e6,color:#fff
+```
+
+**Storage:**
+```
+agents/brain/
+  runs.jsonl     ← immutable append-only audit log
+  model.json     ← derived model state (rebuilt from runs)
 ```
 
 ---
 
 ## Quick Start
 
-### Prerequisites
+### Run Agent 1 in 3 steps
 
 ```bash
-node --version    # 18+
-python3 --version # 3.9+
-ffmpeg -version   # any recent version
-```
-
-Install ffmpeg if missing:
-```bash
-brew install ffmpeg   # macOS
-```
-
-### 1. Clone and install
-
-```bash
+# 1. Clone
 git clone https://github.com/samcolibri/aistudio.git
-cd aistudio
-npm install
+cd aistudio/agents
 
-# Remotion (video editor)
-cd remotion && npm install && cd ..
+# 2. Set your Airtable key (only env var needed)
+echo "AIRTABLE_API_KEY=patXXXXXXXXXXXXXX" > .env
 
-# Python carousel generator
-pip3 install Pillow
+# 3. Run — auto-installs httpx + python-dotenv on first run
+python3 agent.py --list          # show all Content Approved briefs
+python3 agent.py --all           # process all → saves JSON per brief
+python3 agent.py --brief-id rec0kxOAXZNsJvmwO   # one brief only
+python3 agent.py --v2            # Version 2 Living table
+python3 agent.py --v2 --all      # process all V2 briefs
 ```
 
-### 2. Configure API keys
+### Run the full pipeline
 
 ```bash
-cp .env.example .env
-# Open .env and fill in your keys (see API Keys section below)
+cd aistudio
+cp .env.example .env    # fill in API keys (see table below)
+
+python3 agents/run_pipeline.py             # all approved briefs
+python3 agents/run_pipeline.py --agent 1   # BriefForge only
+python3 agents/run_pipeline.py --agent 2   # ImageForge only
+python3 agents/run_pipeline.py --agent 3   # CloudPublish only
+python3 agents/run_pipeline.py --brain     # check learned model
 ```
 
-### 3. Launch
+### Launch the dashboard
 
-**Terminal 1 — Production Dashboard:**
 ```bash
 npx tsx src/dashboard/server.ts
 # → http://localhost:3004
 ```
 
-**Terminal 2 — Remotion Video Editor:**
-```bash
-cd remotion
-node node_modules/@remotion/cli/remotion-cli.js studio src/Root.tsx --port 3003
-# → http://localhost:3003
-```
-
-Open both in your browser. That's it.
-
 ---
 
-## The Two Interfaces
+## Agent 1 — BriefForge
 
-### localhost:3004 — AI Studio Dashboard
+> **Reads every Airtable row in real-time. Picks the best script. Parses it into production-ready sections.**
 
-The production command center. Pipeline-first layout:
+```mermaid
+flowchart LR
+    AT[("Airtable\nAll rows paginated")] -->|"filter: Content Approved? = Approved"| BF
 
+    subgraph BF["BriefForge Transform"]
+        direction TB
+        P1["pick_best_script()\nV5→V4→V3→V2→V1→Preview"]
+        P2["extract_script_sections()\nHook · Body · CTA · Visuals"]
+        P3["build_feedback_trail()\nV1 Chad → V5 Chad → General"]
+        P4["Channel format mapping\n9:16 TikTok · 1:1 IG · 2:3 Pinterest"]
+        P5["Brain context injection\nget_context() → avg quality + top prompts"]
+        P1 --> P2 --> P3 --> P4 --> P5
+    end
+
+    BF --> OUT[("output/{brief_id}/\nagent1_output.json")]
+
+    style BF fill:#0a2a3a,stroke:#00709c,color:#fff
 ```
-┌──────┬──────────────────┬────────────────────────────────────────┐
-│ 📋   │  Approved Briefs │  Pipeline Workspace                    │
-│ 🎬   │  ─────────────   │                                        │
-│ 🎨   │  [Brief #1]      │  1 Brief → 2 Script → 3 Produce → 4  │
-│ 🧑‍⚕️  │  [Brief #2]      │                                        │
-│ ⚡   │  [Brief #3]      │  Step 1: See the brief, hook, plan    │
-│ ⚙️   │  ...             │  Step 2: Full script + voice preview   │
-│      │                  │  Step 3: Hit Produce → watch live log │
-│      │                  │  Step 4: Inline video playback        │
-└──────┴──────────────────┴────────────────────────────────────────┘
+
+**Script section parser — two formats handled:**
+
+| Format | Detection | Hook | Body | CTA |
+|--------|-----------|------|------|-----|
+| Structured | `**HOOK**` / `**BODY**` / `**CTA**` markers | After `**HOOK**` | After `**BODY**` | After `**CTA**` |
+| Freeform | No markers detected | Line 1 | Lines 2 to n-1 | Last line |
+
+Visual directions in `[square brackets]` are always extracted automatically from either format.
+
+**Output JSON:**
+```json
+{
+  "agent": "BriefForge",
+  "version": "2.0",
+  "brief": {
+    "id": "rec0kxOAXZNsJvmwO",
+    "rank": 1,
+    "title": "Your High School Checklist: 9 Classes...",
+    "channel": "TikTok",
+    "script_version": "V5",
+    "content_approved": "Approved"
+  },
+  "script": {
+    "hook": "take these 9 classes now and nursing school...",
+    "body": "class 1: anatomy and physiology...",
+    "cta": "follow for more nursing content",
+    "visual_directions": ["Show student at desk", "Cut to nursing campus"],
+    "word_count": 273,
+    "char_count": 1655
+  },
+  "chad_feedback": [
+    { "version": "V4", "text": "tighten the hook..." },
+    { "version": "V5", "text": "approved, ship it" }
+  ],
+  "production_notes": {
+    "channel_format": { "ratio": "9:16", "size": "1080x1920" },
+    "recommended_voice": "Sarah (Fish Audio 933563129e564b19a115bedd57b7406a)"
+  }
+}
 ```
 
-**Sidebar icons:**
-- 📋 Pipeline — the main workflow
-- 🎬 AI Videos — gallery of all 18 produced assets (from Airtable)
-- 🎨 Assets — local file browser
-- 🧑‍⚕️ Mike — character poses
-- ⚡ APIs — live health check for all connected services
-- ⚙️ Settings — add/update API keys without touching .env
-
-### localhost:3003 — Remotion Video Editor
-
-Adobe Premiere-style real-time editor. Select a composition in the left sidebar:
-
-| Composition | Source Video | Format |
-|---|---|---|
-| `TalkingHeadEdit` | OmniHuman female talking head | TikTok 1080×1920 |
-| `Veo3Edit` | Google Veo3 AI video | TikTok 1080×1920 |
-| `GoogleDirectEdit` | Google Direct 30s video | TikTok 1080×1920 |
-| `TikTok` | Brand animated composition | TikTok 1080×1920 |
-| `Instagram` | Carousel slides | Instagram 1080×1080 |
-| `YouTube` | YouTube with Mike character | YouTube 1920×1080 |
-| `Pinterest` | Educational pin | Pinterest 1000×1500 |
-
-**Live editing:**
-1. Scrub the timeline (bottom bar) — see any frame
-2. Open Props panel (top right `{...}`) — change text, colors, captions live
-3. Hit **Render** → export final branded MP4
-
----
-
-## AI Agents
-
-Each agent is a TypeScript script in `src/scripts/`:
-
-### Voice Agent
+**CLI:**
 ```bash
-# Generates Sarah female voice narration (~24s)
-npx tsx src/scripts/student-omnihuman.ts
-# → output/rec0kxOAXZNsJvmwO/narration_student.mp3
-```
-Uses Fish Audio API. Voice: Sarah, ID `933563129e564b19a115bedd57b7406a`
-
-### Talking Head Agent (OmniHuman v1.5)
-```bash
-# Portrait + audio → 24.5s talking head video
-npx tsx src/scripts/student-omnihuman.ts
-# → output/rec0kxOAXZNsJvmwO/student_omnihuman_qt.mp4
-```
-Uses ByteDance OmniHuman via fal.ai. **Requires fal.ai balance.**
-
-### Video Agent (Google Veo3)
-```bash
-# 5 scene × 8s clips → 30s stitched video, no API cost
-npx tsx src/scripts/google-direct-30s.ts
-# → output/rec0kxOAXZNsJvmwO/google_direct_final.mp4
-```
-Uses Google AI API. **Free tier works.**
-
-### Kling Avatar Agent (30s)
-```bash
-# Splits audio into 3 segments → 3 Kling clips → stitch
-npx tsx src/scripts/kling-30s-final.ts
-# → output/rec0kxOAXZNsJvmwO/kling30_final.mp4
-```
-Uses Kling AI Avatar v2 Pro via fal.ai. **Requires fal.ai balance.**
-
-### Image Agent (Flux / Imagen4)
-```bash
-# Generate student portrait with direct eye contact (for OmniHuman)
-npx tsx src/scripts/gen-face-direct.ts   # Google Imagen4 — free
-npx tsx src/scripts/gen-face-flux.ts     # Flux Pro Ultra — requires fal.ai balance
-```
-
-### Carousel Agent (PIL — zero AI cost)
-```bash
-# 6-slide "Should I Be a Nurse?" carousel — pixel-perfect text
-python3 src/scripts/gen-carousel-pil.py
-# → output/recUm0xdiqNLg664h/carousel/slide_01-06.png
-```
-Pure Python Pillow. **No API key needed. Instant. Zero spelling errors.**
-
-### Sync Agent
-```bash
-# Upload all produced assets to GitHub + sync to Airtable
-npx tsx src/scripts/airtable-produced-all.ts     # videos
-npx tsx src/scripts/airtable-sync-carousel.ts    # carousel slides
+python3 agents/agent_1_brief_forge.py --list
+python3 agents/agent_1_brief_forge.py --all
+python3 agents/agent_1_brief_forge.py --brief-id recXXX
+python3 agents/agent_1_brief_forge.py --refresh
 ```
 
 ---
 
-## The Brand Brain
+## Agent 2 — ImageForge
 
-Every agent knows the SimpleNursing brand. The brain lives in `docs/ocl-brain/`:
+> **Reads image prompts from Agent 1. Runs DALL·E 3 HD and Ideogram v2 in parallel. Auto-selects the best image per model.**
 
-```
-docs/ocl-brain/
-├── personas/          # Student Nurse Sara, RN Mike — full psychographic profiles
-├── icp-mapping/       # ICP segments, pain points, decision triggers
-├── pov-templates/     # POV frameworks for each content type
-├── case-studies/      # What worked, what didn't, why
-└── 2026-reports/      # Market research, trend data
-```
+```mermaid
+flowchart TD
+    IN[("agent1_output.json\nimage_prompts: A, B, C")] --> TP
 
-Agents call `pick_brain_files()` + `read_brain_file()` at runtime to load relevant context before generating content. The brain is version-controlled — it grows with every campaign.
+    subgraph TP["ThreadPoolExecutor — parallel generation"]
+        direction LR
+        D3["DALL·E 3 HD\nPhotorealistic\n(Variant A, B)"]
+        ID["Ideogram v2\nGraphic / text\n(Variant A, B, C)"]
+    end
 
----
+    TP --> SC["Auto-score each image\n0.0 – 1.0\n(model × variant × file size)"]
+    SC --> SEL["Select best 1 per model"]
+    SEL --> W1["dalle3_best.png\nWinner: photorealistic"]
+    SEL --> W2["ideogram_best.png\nWinner: graphic / text"]
+    W1 --> OUT[("agent2_output.json\nimages/ directory")]
+    W2 --> OUT
+    OUT --> BRAIN["Register top prompts\nwith Agent Brain"]
 
-## Airtable Structure
-
-Two bases, always in sync:
-
-### Content Briefs Base (`appLFh438nLooz6u7`)
-Where ideas are born, ranked, and approved.
-
-| Field | What it means |
-|---|---|
-| Title | Content title |
-| Hook | Opening line that stops the scroll |
-| Content Preview | Full AI-written script |
-| Channel | tiktok / instagram / pinterest / youtube |
-| Score | AI-ranked potential (0-100) |
-| Creative Approved? | **Chad clicks this** — the only human gate |
-| Creative Link | Link to produced asset (auto-filled after production) |
-
-### AI Studio Base (`app4LEuOXBxPArLsr`) — Produced Videos
-Where completed assets live.
-
-| Field | What it means |
-|---|---|
-| Name | Asset name |
-| Type | AI Generated |
-| Channel | Target platform |
-| Status | Draft / Final |
-| GitHub URL | Direct CDN link to the file |
-| Brief ID | Links back to the brief that spawned it |
-| Date Produced | When it was made |
-| Notes | Agent notes, model used, settings |
-
-**Live view:** https://airtable.com/app4LEuOXBxPArLsr
-
----
-
-## API Keys Reference
-
-| Key | Where to get it | Cost | Used for |
-|---|---|---|---|
-| `GOOGLE_AI_KEY` | aistudio.google.com | Free | Veo3 video, Imagen4 images |
-| `FISH_AUDIO_API_KEY` | fish.audio/go-api | ~$2 to start | Sarah voice narration |
-| `FAL_KEY` | fal.ai/dashboard/keys | Pay-per-use | OmniHuman, Kling, Flux |
-| `AIRTABLE_API_KEY` | airtable.com/create/tokens | Free | Read/write briefs + assets |
-| `ANTHROPIC_API_KEY` | console.anthropic.com | Pay-per-use | Script analysis (optional) |
-
-**Minimum to run (free or near-free):**
-- `GOOGLE_AI_KEY` — Veo3 + Imagen4 + carousel-free path
-- `AIRTABLE_API_KEY` — read briefs from Airtable
-- `FISH_AUDIO_API_KEY` — voice (one-time $2 load)
-
-**To unlock talking-head videos:**
-- `FAL_KEY` with balance — OmniHuman + Kling
-
----
-
-## What Gets Produced
-
-From one approved brief, the system produces:
-
-```
-output/{briefId}/
-├── narration_student.mp3      # 24s female voice narration
-├── student_omnihuman_qt.mp4   # OmniHuman talking head (best)
-├── google_direct_final.mp4    # Veo3 30s video (5 scenes)
-├── veo3_final.mp4             # Alternative Veo3 cut
-├── kling30_final.mp4          # Kling Avatar 30s (3 segments)
-├── tiktok_final.mp4           # Remotion brand composite
-└── carousel/                  # (for Instagram briefs)
-    ├── slide_01.png
-    ├── slide_02.png
-    └── ...
+    style TP fill:#0a2a0a,stroke:#fad74f,color:#fff
 ```
 
-All assets auto-uploaded to GitHub Releases + synced to Airtable with public URLs.
+**Image prompt variants per channel:**
+
+| Variant | Style | Format | Use case |
+|---------|-------|--------|----------|
+| A | Photorealistic | 9:16 (TikTok) | Female nursing student, clinical setting |
+| B | Bold graphic | 9:16 (TikTok) | Dark bg, teal + yellow, infographic style |
+| C | Carousel cover | 1:1 (Instagram only) | Swipe indicator, minimal, on-brand |
+
+**CLI:**
+```bash
+python3 agents/agent_2_image_forge.py --all
+python3 agents/agent_2_image_forge.py --brief-id recXXX
+```
+
+**Required env vars:** `OPENAI_API_KEY`, `IDEOGRAM_API_KEY`
 
 ---
 
-## Produced Assets (as of 2026-05-01)
+## Agent 3 — CloudPublish
 
-18 assets live at: https://github.com/samcolibri/aistudio/releases/tag/simplenursing-assets-2026-05-01
+> **Authenticates with Microsoft Graph API. Creates folder hierarchy in OneDrive/SharePoint. Uploads all assets. Returns public share links.**
 
-**Talking head video (OmniHuman v1.5):**
-https://github.com/samcolibri/aistudio/releases/download/simplenursing-assets-2026-05-01/student_omnihuman_qt.mp4
+```mermaid
+flowchart LR
+    IN1[("agent1_output.json")] --> CP
+    IN2[("images/*.png")] --> CP
 
-**"Should I Be a Nurse?" carousel (6 slides):**
-https://github.com/samcolibri/aistudio/releases/download/simplenursing-assets-2026-05-01/slide_01.png
-https://github.com/samcolibri/aistudio/releases/download/simplenursing-assets-2026-05-01/slide_02.png
-https://github.com/samcolibri/aistudio/releases/download/simplenursing-assets-2026-05-01/slide_03.png
-https://github.com/samcolibri/aistudio/releases/download/simplenursing-assets-2026-05-01/slide_04.png
-https://github.com/samcolibri/aistudio/releases/download/simplenursing-assets-2026-05-01/slide_05.png
-https://github.com/samcolibri/aistudio/releases/download/simplenursing-assets-2026-05-01/slide_06.png
+    subgraph CP["CloudPublish"]
+        AUTH["OAuth2 client credentials\nMS_CLIENT_ID + MS_CLIENT_SECRET"]
+        AUTH --> FOLD["Create folder hierarchy\nAI Studio / Channel / Title"]
+        FOLD --> UP["Upload files\nscript JSON + images"]
+        UP --> LINK["Create anonymous share links\nper-file public URLs"]
+    end
+
+    LINK --> OUT[("agent3_output.json\nAll file URLs")]
+    OUT --> AT[("Airtable\nasset record updated")]
+
+    style CP fill:#2a0a1a,stroke:#fc3467,color:#fff
+```
+
+**Folder structure created in OneDrive:**
+```
+AI Studio/
+  TikTok/
+    Your High School Checklist/
+      agent1_output.json
+      dalle3_A.png
+      ideogram_B.png
+```
+
+**CLI:**
+```bash
+python3 agents/agent_3_cloud_publish.py --all
+python3 agents/agent_3_cloud_publish.py --brief-id recXXX
+```
+
+**Required env vars:** `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, `MS_TENANT_ID`  
+**Optional:** `MS_SHAREPOINT_SITE` · `MS_DRIVE_FOLDER` (default: `AI Studio`)
 
 ---
 
-## Tech Stack
+## MAYA — Target Audience
 
-| Layer | Technology |
-|---|---|
-| Dashboard | Node.js HTTP + React (CDN, no build step) |
-| Video editor | Remotion 4.0.450 + React 18 |
-| Talking head | OmniHuman v1.5 (ByteDance / fal.ai) |
-| AI video | Google Veo3 direct API |
-| AI images | Google Imagen4 Ultra + Flux Pro Ultra |
-| Voice | Fish Audio Sarah (female, conversational) |
-| Carousel | Python Pillow (PIL) |
-| Brand motion | Remotion spring physics animations |
-| Asset CDN | GitHub Releases |
-| Asset library | Airtable |
-| Scripts | TypeScript (tsx) |
-| Types | Strict TypeScript throughout |
+Every piece of content this system produces is engineered for one person:
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                         MAYA ICP                               │
+├────────────────────────────────────────────────────────────────┤
+│  Age:        15–18                                             │
+│  Gender:     Female                                            │
+│  Stage:      Pre-nursing consideration                         │
+│  Platform:   TikTok primary · Instagram secondary              │
+│  Trigger:    "Can I actually get into nursing school?"         │
+│  Pain:       Confused about prerequisites, scared of failure   │
+│  Win:        Clear, confident, specific answer in 30 seconds   │
+├────────────────────────────────────────────────────────────────┤
+│  Content that works:                                           │
+│  ✓ Checklist formats ("9 classes you need to take NOW")        │
+│  ✓ Quiz formats ("Are you cut out for nursing school?")        │
+│  ✓ Myth-busting ("You do NOT need all A's")                    │
+│  ✓ Confident female voice (Sarah, Fish Audio)                  │
+│  ✓ Clinical visual setting — not a classroom                   │
+└────────────────────────────────────────────────────────────────┘
+```
+
+All agents receive this ICP context at runtime via the brand brain.
+
+---
+
+## SimpleNursing Brand System
+
+```mermaid
+mindmap
+  root((SimpleNursing))
+    Colors
+      Teal #00709c
+      Blue #75c7e6
+      Pink #fc3467
+      Yellow #fad74f
+      Dark #282323
+      Navy #005374
+    Voice
+      Sarah
+      Fish Audio
+      ID 933563129e564b19a115bedd57b7406a
+      Female · Conversational · Confident
+    Channels
+      TikTok 9:16 1080×1920
+      Instagram 1:1 1080×1080
+      Pinterest 2:3 1000×1500
+      YouTube 16:9 1920×1080
+    Audience
+      MAYA ICP
+      Age 15–18
+      Female
+      Pre-nursing
+    Website
+      simplenursing.com
+```
+
+---
+
+## Dashboard — localhost:3004
+
+The live production command center. Built as a single-file React SPA served by Node.js — no build step.
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  EVOLOTION DASHBOARD            localhost:3004                   │
+├────────┬─────────────────────────────────────────────────────────┤
+│        │                                                         │
+│  📋    │  LEFT PANEL              RIGHT PANEL (reader)           │
+│Scripts │  ──────────────          ──────────────────             │
+│        │  🟢 READY TO PRODUCE     Brief: #8 — Title...          │
+│  🔬    │  ├─ Rank #8  ✓           Hook: "take these..."         │
+│ Agent1 │  ├─ Rank #12 ✓                                         │
+│        │  ├─ Rank #17 ✓           📜 Creative Brief             │
+│  🖼️    │  └─ Rank #38 ✓           (purple box, full text)       │
+│ Images │                                                         │
+│        │  📁 TABLE 1              🎣 Script                      │
+│  ⚙️    │  ├─ Rank #1              Hook · Body · CTA             │
+│Settings│  ├─ Rank #3              Visual cues                   │
+│        │  └─ Rank #7              Word count · Char count       │
+│        │                                                         │
+│        │                          💬 Chad Feedback               │
+│        │                          V1 → V5 → General             │
+│        │                                                         │
+│        │                          🔍 Scout Sources               │
+│        │                          (collapsible)                  │
+└────────┴─────────────────────────────────────────────────────────┘
+```
+
+**Key features:**
+- V2 Approved briefs (ranks 8, 12, 17, 26, 29, 32, 36, 38) surfaced first in green "Ready to Produce" section
+- Live Airtable refresh via SSE streaming (`/api/agent1-refresh`)
+- Full script reader: hook, body, CTA, visual directions, feedback trail
+- Creative Brief visible in purple box when present
+- Scout sources collapsible
+
+---
+
+## Hardcoded Constants
+
+All constants are locked. No configuration overrides allowed.
+
+| Constant | Value | What it locks |
+|----------|-------|---------------|
+| `AIRTABLE_BASE_ID` | `appLFh438nLooz6u7` | SimpleNursing content briefs base |
+| `AIRTABLE_TABLE_ID` | `tbl5P3J8agdY4gNtT` | Content Briefs (Live) table |
+| `TABLE2_ID` | `tblrwTcoT7YNZhNA6` | Version 2 (Living) table |
+| `APPROVAL_FIELD` | `Content Approved?` | Approval gate field |
+| `APPROVAL_VALUE` | `Approved` | Required value to process |
+| Script priority | V5 → V4 → V3 → V2 → V1 → Content Preview | Highest version always wins |
+| Voice | Sarah · Fish Audio `933563129e564b19a115bedd57b7406a` | Locked narrator |
+| Brand teal | `#00709c` | SimpleNursing primary |
+| Brand yellow | `#fad74f` | SimpleNursing accent |
+| Brand pink | `#fc3467` | SimpleNursing highlight |
+
+---
+
+## Airtable Schema
+
+### Table 1 — Content Briefs (Live)
+
+| Field | Agent | Role |
+|-------|-------|------|
+| `Content Approved?` | Agent 1 | **Primary gate** — must be `Approved` |
+| `Creative Approved?` | Agent 2/3 | Full pipeline gate |
+| `Rank` | All | Sort order |
+| `Title` | All | Brief title |
+| `Hook` | Agent 1 | Opening hook line |
+| `Channel` | All | TikTok / Instagram / Pinterest / YouTube |
+| `V5 Content` → `V1 Content` | Agent 1 | Script versions (V5 preferred) |
+| `Content Preview` | Agent 1 | Pre-versioned fallback |
+| `V5 Chad Feedback` → `V1 Chad Feedback` | Agent 1 | Feedback trail |
+| `Feedback` | Agent 1 | General notes |
+| `Score` | Agent 1 | Brief quality score |
+| `Evidence Strength` | Agent 1 | Content credibility signal |
+
+### Table 2 — Version 2 (Living)
+
+| Field | Agent | Role |
+|-------|-------|------|
+| `Content Brief` | Agent 1 | Full research brief |
+| `Creative Brief` | Agent 1 | Visual + production direction |
+| `Scout Sources` | Agent 1 | 100+ research URLs |
+| `Maya Segment` | Agent 1 | ICP match segment |
+| `Business Case` | Agent 1 | Why this topic wins |
+| `Readiness` | Agent 1 | Draft / Ready / Live |
+| `Freshness` | Agent 1 | Fresh / Stale / Evergreen |
+
+---
+
+## API Keys
+
+| Key | Agent | Where to get | Cost |
+|-----|-------|--------------|------|
+| `AIRTABLE_API_KEY` | 1 | airtable.com/create/tokens | Free |
+| `OPENAI_API_KEY` | 2 | platform.openai.com/api-keys | Pay-per-use |
+| `IDEOGRAM_API_KEY` | 2 | ideogram.ai/api | Pay-per-use |
+| `MS_CLIENT_ID` | 3 | Azure portal → App registrations | Free |
+| `MS_CLIENT_SECRET` | 3 | Azure portal → App registrations | Free |
+| `MS_TENANT_ID` | 3 | Azure portal → Overview | Free |
+| `MS_SHAREPOINT_SITE` | 3 | Optional (e.g. `colibrigroup.sharepoint.com`) | — |
+| `MS_DRIVE_FOLDER` | 3 | Optional (default: `AI Studio`) | — |
+
+**Minimum to run Agent 1:** `AIRTABLE_API_KEY` only.
+
+---
+
+## Output Structure
+
+```
+agents/
+  output/
+    {brief_id}/
+      agent1_output.json    ← script + brand + feedback trail
+      agent2_output.json    ← image selection + scores
+      agent3_output.json    ← cloud URLs + share links
+      images/
+        dalle3_A.png        ← photorealistic winner
+        dalle3_B.png
+        ideogram_A.png      ← graphic/text winner
+        ideogram_B.png
+  brain/
+    runs.jsonl              ← every run, immutable
+    model.json              ← learned model state
+```
+
+> `agents/output/` is gitignored — never committed to source control.
 
 ---
 
@@ -377,113 +596,54 @@ https://github.com/samcolibri/aistudio/releases/download/simplenursing-assets-20
 
 ```
 aistudio/
+├── agents/
+│   ├── agent.py                    ← self-contained Agent 1 (clone + run)
+│   ├── agent_1_brief_forge.py      ← full pipeline Agent 1
+│   ├── agent_2_image_forge.py      ← full pipeline Agent 2
+│   ├── agent_3_cloud_publish.py    ← full pipeline Agent 3
+│   ├── agent_brain.py              ← Super Brain (learning loop)
+│   ├── run_pipeline.py             ← orchestrator (runs all 3)
+│   ├── config.py                   ← all hardcoded constants
+│   ├── BRIEFFORGE.md               ← Agent 1 standalone docs
+│   └── agent.md                    ← full system docs
+│
 ├── src/
 │   ├── dashboard/
-│   │   └── server.ts          # Dashboard server + full React SPA (inline)
-│   ├── scripts/               # One script per agent
-│   │   ├── student-omnihuman.ts   # OmniHuman talking head
-│   │   ├── google-direct-30s.ts   # Veo3 30s video
-│   │   ├── kling-30s-final.ts     # Kling Avatar 30s
-│   │   ├── gen-face-direct.ts     # Imagen4 portrait generation
-│   │   ├── gen-carousel-pil.py    # PIL carousel (no AI cost)
-│   │   ├── airtable-produced-all.ts   # Sync all videos to Airtable
-│   │   └── airtable-sync-carousel.ts  # Sync carousel to Airtable
-│   ├── client/                # API clients (typed)
-│   │   ├── airtable.ts
-│   │   ├── google-ai.ts
-│   │   ├── fish-audio.ts
-│   │   ├── fal.ts
-│   │   └── kling.ts
-│   ├── pipeline/              # Orchestration
-│   │   └── orchestrate.ts     # Master pipeline runner
-│   └── types/
-│       └── brief.ts           # ContentBrief type
-├── remotion/
-│   ├── src/
-│   │   ├── Root.tsx           # All composition registrations
-│   │   └── compositions/
-│   │       ├── VideoEditorComposition.tsx  # AI video editor
-│   │       ├── TikTok.tsx
-│   │       ├── Instagram.tsx
-│   │       ├── YouTube.tsx
-│   │       └── Pinterest.tsx
-│   └── public/
-│       ├── ai-videos/         # AI-produced videos (for Remotion)
-│       └── simplenursing-logo.png
-├── output/                    # Produced assets (gitignored)
-├── .env.example               # Template — copy to .env
-└── README.md                  # This file
+│   │   └── server.ts               ← dashboard server + full React SPA
+│   ├── scripts/                    ← production agents (voice, video, image)
+│   ├── client/                     ← typed API clients
+│   └── types/                      ← TypeScript types
+│
+├── remotion/                       ← Remotion video editor
+├── output/                         ← produced assets (gitignored)
+├── .env.example                    ← copy to .env, fill keys
+└── README.md
 ```
 
 ---
 
-## The Evolotion System
+## Azure App Setup (Agent 3)
 
-This repo is the **production layer** of a larger autonomous system called Evolotion.
+To upload to OneDrive/SharePoint:
 
-```
-EVOLOTION — End-to-End Autonomous Content Intelligence
+1. Go to `portal.azure.com` → Azure Active Directory → App registrations → New registration
+2. Add API permissions: `Files.ReadWrite.All` *(application permission, not delegated)*
+3. Grant admin consent
+4. Create client secret → Certificates & secrets
+5. Copy values to `.env`:
 
-┌─────────────────────────────────────────────────────────────────────┐
-│  LAYER 1: INTELLIGENCE                                              │
-│  AI scans 1000s of nursing forums, TikTok, Reddit, search trends   │
-│  → Scores each idea by virality potential                           │
-│  → Writes hook + full script + production brief                     │
-│  → Ranks all ideas in Airtable by score                            │
-└────────────────────────────┬────────────────────────────────────────┘
-                             │
-                             ▼ (one human checkpoint)
-┌─────────────────────────────────────────────────────────────────────┐
-│  LAYER 2: HUMAN GATE                                                │
-│  Chad reviews ranked briefs in Airtable                             │
-│  Approves: clicks "Creative Approved" checkbox                       │
-│  Rejects: leaves unchecked or edits hook                            │
-│  Time cost: ~2 minutes per brief                                    │
-└────────────────────────────┬────────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  LAYER 3: PRODUCTION (this repo)                                    │
-│                                                                     │
-│  Voice Agent    → Sarah narrates the script (Fish Audio)            │
-│  Portrait Agent → Female nursing student (Imagen4/Flux)             │
-│  Talking Head   → OmniHuman syncs portrait to voice (24.5s)         │
-│  Video Agent    → Veo3 generates b-roll (5 × 8s scenes)             │
-│  Kling Agent    → Kling Avatar creates 30s talking head             │
-│  Carousel Agent → PIL generates 6 brand slides (instant, free)      │
-│  Compositor     → Remotion adds brand layer (text, logo, CTA)       │
-│                                                                     │
-│  All agents share the brand brain (OCL — 15 documents)              │
-│  All outputs auto-sync to Airtable + GitHub CDN                     │
-└────────────────────────────┬────────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  LAYER 4: DELIVERY                                                  │
-│  Human reviews final video in Airtable (has the GitHub link)        │
-│  Posts to TikTok / Instagram / YouTube / Pinterest                  │
-│  Time cost: ~5 minutes per piece                                    │
-└─────────────────────────────────────────────────────────────────────┘
-
-Total human time per piece of content: ~7 minutes
-AI production time: ~8-15 minutes (running in background)
-Human content team replaced: 10 roles
+```bash
+MS_CLIENT_ID=<Application (client) ID>
+MS_TENANT_ID=<Directory (tenant) ID>
+MS_CLIENT_SECRET=<secret value>
 ```
 
 ---
 
-## Blockers / What to Resume
+<div align="center">
 
-| Item | Status | Action needed |
-|---|---|---|
-| fal.ai balance | EXHAUSTED | Top up at fal.ai/dashboard/billing |
-| OmniHuman re-run | BLOCKED | Top up fal.ai, then `npx tsx src/scripts/student-omnihuman.ts` |
-| Kling 30s | BLOCKED | Top up fal.ai, then `npx tsx src/scripts/kling-30s-final.ts` |
-| Timeline carousel | NOT BUILT | Brief `recZ7k8XmDY3iYDoz` — copy gen-carousel-pil.py approach |
-| Pinterest pin | PARTIAL | Brief `recG1hn62Xr1w08OM` — regenerate with better prompt |
+**Built by [Colibri Group](https://colibrigroup.com) for SimpleNursing**
 
----
+*Internal tool — not for redistribution*
 
-## License
-
-Internal tool — Colibri Group proprietary. Not for redistribution.
+</div>
